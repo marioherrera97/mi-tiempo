@@ -150,10 +150,10 @@ export function updateAccum(grid, t0) {
   }
 }
 
-// Carga en segundo plano el resto de horas (primero las más cercanas a la que se ve)
-export async function prefetch(grid, imgs, from, isCurrent, onStep, concurrency = 3) {
+// Carga en segundo plano las horas cercanas a la que se ve (las demás, al mover la barra de tiempo)
+export async function prefetch(grid, imgs, from, ahead, isCurrent, onStep, concurrency = 3) {
   const order = [];
-  for (let d = 0; d < grid.nt; d++) {
+  for (let d = 0; d <= ahead; d++) {
     if (from + d < grid.nt) order.push(from + d);
     if (d && from - d >= 0) order.push(from - d);
   }

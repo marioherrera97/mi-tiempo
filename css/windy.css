@@ -149,3 +149,5 @@ body.map-mode { background: #2b2b2b; }
 .wd-bar option { color: #111; }
 
 .wd-src { margin: 4px 12px 0; font-size: 12px; color: #ffd27a; }
+
+.w-day.narrow { font-size: 15px; }

@@ -208,7 +208,7 @@ async function loadOwn({ meta, imgs }) {
     S.loading--;
   }
   // El resto de horas, en segundo plano
-  own.prefetch(grid, imgs, S.t, () => S.grid === grid && S.ownGen === gen, (t, img) => {
+  own.prefetch(grid, imgs, S.t, 24, () => S.grid === grid && S.ownGen === gen, (t, img) => {
     if (img === 'b' && S.layer === 'rainacc') own.updateAccum(grid, S.t0);
     if (t === S.t || t === S.t + 1) S.field.setTime(S.t, S.tf || 0);
   });
@@ -658,14 +658,18 @@ function buildDays() {
   for (let i = S.t0; i < g.nt; i++) {
     const d = new Date(g.times[i] + ':00Z');
     const key = d.toDateString();
-    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, d, n: 0 });
+    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, d, n: 0, start: i });
     groups[groups.length - 1].n++;
   }
+  // Ancho proporcional a los pasos de datos del día, igual que avanza el deslizador
   const total = g.nt - S.t0;
+  const px = box.clientWidth || 300;
   box.innerHTML = groups.map((gr, k) => {
     const w = (gr.n / total) * 100;
-    const label = w > 24 ? `${DAYS_LONG[gr.d.getDay()]} ${gr.d.getDate()}` : w > 9 ? `${DAYS_ES[gr.d.getDay()]} ${gr.d.getDate()}` : '';
-    return `<div class="w-day${k === 0 ? ' first' : ''}" style="width:${w}%"><span>${label}</span></div>`;
+    const wpx = (w / 100) * px;
+    // Etiqueta según el hueco: "Lunes 19", "lun 19", "19" o nada
+    const label = wpx > 125 ? `${DAYS_LONG[gr.d.getDay()]} ${gr.d.getDate()}` : wpx > 58 ? `${DAYS_ES[gr.d.getDay()]} ${gr.d.getDate()}` : wpx > 22 ? String(gr.d.getDate()) : '';
+    return `<div class="w-day${k === 0 ? ' first' : ''}${wpx < 58 ? ' narrow' : ''}" style="width:${w}%"><span>${label}</span></div>`;
   }).join('');
 }
 

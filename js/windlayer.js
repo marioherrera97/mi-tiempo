@@ -165,6 +165,34 @@ export class FieldLayer {
     this._zoom = map.getZoom();
     this.bounds = L.latLngBounds(map.containerPointToLatLng([-ox, h - oy]), map.containerPointToLatLng([w - ox, -oy]));
     this._buildMask();
+    this._buildShade();
+  }
+  // Sombra del mar (como Windy): el mar algo más oscuro, difuminado hacia la costa. Se dibuja a 1/4
+  // de resolución y se amplía con suavizado, así el difuminado sale casi gratis; solo al redibujar.
+  _buildShade() {
+    this.shade = null;
+    if (!this.land || !this.geo) return;
+    const q = 4, w = Math.ceil(this.geo.w / q), h = Math.ceil(this.geo.h / q);
+    const c = (this.shadeCanvas ||= document.createElement('canvas'));
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    const b = this.bounds;
+    for (const ring of this.land) {
+      if (ring.e < b.getWest() || ring.w > b.getEast() || ring.n < b.getSouth() || ring.s > b.getNorth()) continue;
+      const r = ring.r;
+      for (let i = 0; i < r.length; i += 2) {
+        const [x, y] = this._toCanvas(r[i + 1], r[i]);
+        if (i === 0) ctx.moveTo(x / q, y / q); else ctx.lineTo(x / q, y / q);
+      }
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    this.shade = c;
   }
   // Rótulo de ciudad bajo un punto de la pantalla (coordenadas del contenedor del mapa)
   labelAt(pt) {
@@ -213,6 +241,7 @@ export class FieldLayer {
       return { r, w, e, s, n };
     });
     this._buildMask();
+    this._buildShade();
     this.drawField();
   }
 
@@ -273,6 +302,13 @@ export class FieldLayer {
       ctx.globalCompositeOperation = 'destination-out';
       ctx.drawImage(this.landCanvas, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
+    } else if (this.shade) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.globalAlpha = 0.16;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(this.shade, 0, 0, geo.w, geo.h);
+      ctx.restore();
     }
   }
 

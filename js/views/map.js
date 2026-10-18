@@ -362,6 +362,39 @@ function loadLand() {
   geoData('land').then((rings) => S.field.setLand(rings)).catch(() => { landLoaded = false; });
 }
 
+// ---------- Zoom con la rueda, continuo y suave ----------
+// El de Leaflet anima cada golpe de rueda por separado y descarta los que llegan mientras anima,
+// así que iba lento y a saltos. Aquí cada golpe mueve un objetivo y el mapa se acerca a él fotograma
+// a fotograma con el mismo mecanismo que el pellizco (sin recalcular capas hasta que se para).
+function smoothWheel(map) {
+  let wz = null;
+  const step = () => {
+    const d = wz.target - wz.z;
+    wz.z = Math.abs(d) < 0.004 ? wz.target : wz.z + d * 0.3;
+    // El punto bajo el ratón se queda quieto
+    const half = map.getSize().divideBy(2);
+    const center = map.unproject(map.project(wz.ll, wz.z).subtract(wz.pt.subtract(half)), wz.z);
+    map._move(center, wz.z, { pinch: true, round: false });
+    if (wz.z !== wz.target) { wz.raf = requestAnimationFrame(step); return; }
+    wz = null;
+    map._moveEnd(true);
+  };
+  map.getContainer().addEventListener('wheel', (e) => {
+    e.preventDefault();
+    let px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+    if (e.ctrlKey) px *= 2.5; // pellizco en el panel táctil del portátil
+    if (!wz) {
+      map._stop();
+      map._moveStart(true, false);
+      wz = { z: map.getZoom(), target: map.getZoom(), raf: 0 };
+    }
+    wz.target = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), wz.target - px / 200));
+    wz.pt = map.mouseEventToContainerPoint(e);
+    wz.ll = map.containerPointToLatLng(wz.pt);
+    if (!wz.raf) wz.raf = requestAnimationFrame(step);
+  }, { passive: false });
+}
+
 // ---------- Pueblos (GeoNames, >1.000 hab.) por zonas de 5°, cargados al ampliar ----------
 const placeTiles = new Map();
 let placeIndex = null;
@@ -423,12 +456,8 @@ async function showBorders() {
     S.borderHalo = [L.polyline(coast, opt), L.polyline(countries, opt)];
     S.borderInk = [L.polyline(coast, opt), L.polyline(countries, opt)];
     S.regionLines = L.polyline(regions.map((r) => toLatLngs(r)), { ...opt, dashArray: '3 4' });
-    // El mar algo más oscuro con el borde difuminado: la tierra parece en relieve, como en Windy
-    S.seaShade = L.polygon([[[-85, -200], [85, -200], [85, 200], [-85, 200]], ...land.map((r) => toLatLngs(r))],
-      { renderer: L.canvas({ pane: 'seaPane', padding: 0.4 }), interactive: false, stroke: false, fill: true, fillColor: '#000', fillOpacity: 1, fillRule: 'evenodd' });
-    S.borderLayers = [...S.borderHalo, ...S.borderInk, S.regionLines, S.seaShade];
-    styleBorders();
-    S.borderLayers.forEach((l) => { if (l !== S.regionLines && l !== S.seaShade) l.addTo(S.map); });
+    S.borderLayers = [...S.borderHalo, ...S.borderInk, S.regionLines];
+    S.borderInk.forEach((l) => l.addTo(S.map));
     styleBorders();
     toggleRegions();
   } catch { /* sin conexión: se queda sin líneas */ }
@@ -444,11 +473,14 @@ function styleBorders() {
   const ink = dark ? '#262626' : '#ffffff', halo = '#000000';
   S.borderInk[0].setStyle({ color: ink, weight: dark ? 0.8 : 1.5, opacity: dark ? 0.35 : 0.9 });
   S.borderInk[1].setStyle({ color: ink, weight: dark ? 0.9 : 1.4, opacity: dark ? 0.32 : 0.8 });
-  S.borderHalo.forEach((l) => l.setStyle({ color: halo, weight: 3, opacity: dark ? 0 : 0.35 }));
+  // El halo solo hace falta con líneas claras (radar, satélite); sobre colores ni se dibuja ni se calcula
+  S.borderHalo.forEach((l) => {
+    l.setStyle({ color: halo, weight: 3, opacity: 0.35 });
+    if (dark && S.map.hasLayer(l)) S.map.removeLayer(l);
+    if (!dark && !S.map.hasLayer(l)) l.addTo(S.map);
+  });
+  S.borderInk.forEach((l) => { if (S.map.hasLayer(l)) l.bringToFront(); });
   S.regionLines.setStyle({ color: ink, weight: 0.8, opacity: dark ? 0.22 : 0.5 });
-  // Sombra del mar solo sobre los colores del modelo
-  if (field && !S.map.hasLayer(S.seaShade)) S.seaShade.addTo(S.map);
-  if (!field && S.map.hasLayer(S.seaShade)) S.map.removeLayer(S.seaShade);
 }
 
 // ---------- Lagos y embalses en tono oscuro sobre los colores (como en Windy) ----------
@@ -1244,7 +1276,7 @@ export default {
     if (!S.map) {
       buildUI(root);
       const view = load('map.view', null);
-      const map = L.map('map', { zoomControl: false, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 110, wheelDebounceTime: 20, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
+      const map = L.map('map', { zoomControl: false, zoomSnap: 0, zoomDelta: 0.5, scrollWheelZoom: false, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
         .setView(view ? [view[0], view[1]] : [state.place.lat, state.place.lon], view ? view[2] : 6);
       S.map = map;
       map.createPane('labelsPane').style.zIndex = 380;
@@ -1252,14 +1284,12 @@ export default {
       map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
       // Agua entre los colores (350) y el relieve (356); multiply la oscurece sin tapar el color de debajo
-      // Sombra del mar: negro difuminado y muy tenue, multiplicado sobre los colores
-      Object.assign(map.createPane('seaPane').style, { zIndex: 354, pointerEvents: 'none', opacity: 0.16, filter: 'blur(4px)', mixBlendMode: 'multiply' });
       Object.assign(map.createPane('waterPane').style, { zIndex: 353, pointerEvents: 'none', mixBlendMode: 'multiply' });
       // Relieve sombreado sobre los colores (se mezcla con ellos como en Windy)
       const relief = map.createPane('reliefPane');
-      // Las teselas de Esri son casi blancas: una curva gamma acentúa las sombras sin oscurecer lo llano
-      document.body.insertAdjacentHTML('beforeend', '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="reliefGamma" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="gamma" exponent="3"/><feFuncG type="gamma" exponent="3"/><feFuncB type="gamma" exponent="3"/></feComponentTransfer></filter></svg>');
-      Object.assign(relief.style, { zIndex: 356, pointerEvents: 'none', mixBlendMode: 'multiply', opacity: 0.75, filter: 'url(#reliefGamma)' });
+      // Las teselas de Esri son casi blancas: brillo + contraste acentúan las sombras sin oscurecer lo llano.
+      // Son filtros CSS (los acelera la GPU); el filtro SVG de antes se recalculaba en cada fotograma del zoom.
+      Object.assign(relief.style, { zIndex: 356, pointerEvents: 'none', mixBlendMode: 'multiply', opacity: 0.7, filter: 'brightness(0.68) contrast(2.8)' });
       S.reliefLayer = L.tileLayer(ESRI + 'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { pane: 'reliefPane', maxZoom: 18, maxNativeZoom: 13, attribution: 'Relieve: Esri' });
       if (S.relief) S.reliefLayer.addTo(map);
       // La atribución va justo encima del panel inferior, que cambia de altura
@@ -1272,6 +1302,8 @@ export default {
       fitAttribution();
       setBase();
       S.field = new FieldLayer(map);
+      smoothWheel(map);
+      loadLand(); // costas para la sombra del mar
       // Los nombres de ciudades no se ponen debajo de los botones ni de las barras
       const avoidUI = () => {
         const m = map.getContainer().getBoundingClientRect();

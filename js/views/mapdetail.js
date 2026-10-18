@@ -1,6 +1,6 @@
 // Panel de pronóstico del punto sobre el mapa, con el aspecto del de Windy:
 // resumen de días con la silueta de temperaturas, tabla clara y barra roja con los selectores.
-import { state, settings, saveSettings } from '../state.js';
+import { state, settings, saveSettings, load, save } from '../state.js';
 import { getForecast } from '../data.js';
 import * as api from '../api.js';
 import * as f from '../format.js';
@@ -8,9 +8,19 @@ import { wxIcon } from '../icons.js';
 import { css, textOn } from '../colors.js';
 import { makeChart, baseOptions, theme, alpha, PALETTE } from '../charts.js';
 
-const VIEWS = [['basic', 'Básico'], ['meteo', 'Meteograma'], ['waves', 'Olas'], ['models', 'Modelos']];
-const CMP_MODELS = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless', 'meteofrance_seamless', 'ukmo_seamless', 'ecmwf_aifs025_single', 'gem_seamless'];
-const view = { tab: 'basic', step: 3, cmpVar: 'temperature_2m' };
+const VIEWS = [['basic', 'Básico'], ['meteo', 'Meteograma'], ['waves', 'Olas'], ['models', 'Comparar previsiones']];
+// Los modelos más conocidos y fiables, cada uno con su bloque al comparar
+const CMP_MODELS = [
+  { id: 'ecmwf_ifs', name: 'ECMWF', desc: 'Europa · 9 km · el de referencia' },
+  { id: 'ecmwf_aifs025_single', name: 'ECMWF IA', desc: 'Inteligencia artificial (AIFS)' },
+  { id: 'gfs_seamless', name: 'GFS', desc: 'EE. UU. (NOAA)' },
+  { id: 'icon_seamless', name: 'ICON', desc: 'Alemania (DWD) · alta resolución en Europa' },
+  { id: 'meteofrance_seamless', name: 'AROME / ARPEGE', desc: 'Francia · muy detallado, 4 días' },
+  { id: 'ukmo_seamless', name: 'UKMO', desc: 'Reino Unido (Met Office)' },
+  { id: 'gem_seamless', name: 'GEM', desc: 'Canadá' },
+];
+const CMP_VARS = ['weather_code', 'temperature_2m', 'precipitation', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'cloud_cover', 'is_day'];
+const view = { tab: 'basic', step: 3, cmpMode: 'basic', cmpDays: 5 };
 let sheet = null;
 const DIAS = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
 
@@ -165,31 +175,69 @@ async function waves(body) {
 }
 
 async function models(body) {
-  const VARS = [['temperature_2m', 'Temperatura'], ['precipitation', 'Lluvia'], ['wind_speed_10m', 'Viento'], ['cloud_cover', 'Nubes']];
-  body.innerHTML = `<div class="wd-chips">${VARS.map(([k, l]) => `<button class="${k === view.cmpVar ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div><div id="dtCmp"><div class="loading"><div class="spinner"></div></div></div>`;
-  body.querySelectorAll('[data-v]').forEach((b) => { b.onclick = () => { view.cmpVar = b.dataset.v; models(body); }; });
-  const v = view.cmpVar;
-  const d = await api.compareModels(state.place, CMP_MODELS, [v]);
+  const hidden = load('cmp.hidden', []), pinned = load('cmp.pinned', []);
+  const chips = (key, opts) => `<div class="wd-chips">${opts.map(([v, l]) => `<button class="${view[key] === v ? 'on' : ''}" data-${key}="${v}">${l}</button>`).join('')}</div>`;
+  body.innerHTML = `<div class="cmp-head"><h3>Comparar previsiones</h3>
+    ${chips('cmpMode', [['basic', 'Básico'], ['clouds', 'Nubes y lluvia']])}
+    ${chips('cmpDays', [[5, '5 días'], [10, '10 días'], [16, '16 días']])}</div>
+    <div id="dtCmp"><div class="loading"><div class="spinner"></div>Cargando modelos…</div></div>`;
+  body.querySelectorAll('[data-cmpmode]').forEach((b) => { b.onclick = () => { view.cmpMode = b.dataset.cmpmode; models(body); }; });
+  body.querySelectorAll('[data-cmpdays]').forEach((b) => { b.onclick = () => { view.cmpDays = +b.dataset.cmpdays; models(body); }; });
+  const d = await api.compareModels(state.place, CMP_MODELS.map((m) => m.id), CMP_VARS);
   const h = d.hourly;
+  const get = (v, m) => h[`${v}_${m}`] || h[v] || [];
   const nowKey = f.placeNow(d.utc_offset_seconds).slice(0, 13);
-  const idx = hourIdx(h.time, nowKey, 3, 24 * 7);
-  const { html, isStart } = headRows(h.time, idx);
-  const fmt = (val, i, key) => {
-    if (v === 'temperature_2m') return colored('temp', val, f.temp(val), 0.8);
-    if (v === 'wind_speed_10m') return colored('wind', val, f.wind(val));
-    if (v === 'cloud_cover') return cell(f.isNum(val) ? Math.round(val) : '–', `background:rgba(120,130,145,${((val || 0) / 100 * 0.45).toFixed(2)})`);
-    let sum = 0, any = false;
-    for (let k = i; k < i + 3; k++) if (f.isNum(h[key][k])) { sum += h[key][k]; any = true; }
-    return !any ? cell('–') : cell(sum >= 0.1 ? f.precip(sum) : '', '', 'rainv');
+  const all = hourIdx(h.time, nowKey, view.step, view.cmpDays * 24);
+  const order = [...CMP_MODELS].sort((a, b) => pinned.includes(b.id) - pinned.includes(a.id));
+  const block = (m) => {
+    const temp = get('temperature_2m', m.id);
+    // Cada modelo solo hasta donde llega su pronóstico
+    const idx = all.filter((i) => f.isNum(temp[i]));
+    if (!idx.length) return `<div class="cmp-model"><div class="cmp-title"><b>${m.name}</b><span>Sin datos para este punto</span></div></div>`;
+    const { html, isStart } = headRows(h.time, idx);
+    const R = (label, fn) => rowHtml(label, idx, isStart, fn);
+    const code = get('weather_code', m.id), day = get('is_day', m.id), rain = get('precipitation', m.id);
+    const wind = get('wind_speed_10m', m.id), dir = get('wind_direction_10m', m.id), gust = get('wind_gusts_10m', m.id), cloud = get('cloud_cover', m.id);
+    const rainSum = (i) => {
+      let sum = 0;
+      for (let k = i; k < i + view.step && k < h.time.length; k++) sum += rain[k] || 0;
+      return cell(sum >= 0.1 ? f.precip(sum) : '', '', 'rainv');
+    };
+    const rows = view.cmpMode === 'basic' ? `
+      ${R(`Temperatura <small>${f.tempUnit()}</small>`, (i) => (f.isNum(temp[i]) ? cell(f.temp(temp[i]), `background:${css('temp', temp[i], 0.45)}`, 'big') : cell('–')))}
+      ${R(`Lluvia <small>${f.precipUnit()}</small>`, rainSum)}
+      ${R(`Viento <small>${f.windUnit()}</small>`, (i) => cell(f.isNum(wind[i]) ? `${f.arrow(dir[i])} ${f.wind(wind[i])}` : '–', '', 'windc'))}` : `
+      ${R(`Lluvia <small>${f.precipUnit()}</small>`, rainSum)}
+      ${R('Nubes <small>%</small>', (i) => cell(f.isNum(cloud[i]) ? Math.round(cloud[i]) : '–', `background:rgba(120,130,145,${((cloud[i] || 0) / 100 * 0.5).toFixed(2)})`))}
+      ${R(`Rachas <small>${f.windUnit()}</small>`, (i) => colored('wind', gust[i], f.wind(gust[i])))}`;
+    const isPin = pinned.includes(m.id);
+    return `<div class="cmp-model">
+      <div class="cmp-title"><b>${m.name}</b><span>${m.desc}</span>
+        <button data-hide="${m.id}">Ocultar</button><button data-pin="${m.id}" class="${isPin ? 'on' : ''}">${isPin ? 'Fijado' : 'Fijar arriba'}</button></div>
+      <div class="wd-table cmp-table"><table>${html}
+        <tr class="r-icon"><th class="rowlab"></th>${idx.map((i, j) => `<td class="${isStart(j) ? 'daystart' : ''}">${wxIcon(code[i], day[i] ?? 1)}</td>`).join('')}</tr>
+        ${rows}
+      </table></div></div>`;
   };
-  const rows = CMP_MODELS.map((m, n) => {
-    const key = `${v}_${m}`;
-    if (!h[key]?.some(f.isNum)) return '';
-    const name = api.MODELS.find((x) => x.id === m)?.short || m;
-    return rowHtml(`<span style="color:${PALETTE[n]}">●</span> ${name}`, idx, isStart, (i) => fmt(h[key][i], i, key));
-  }).join('');
-  body.querySelector('#dtCmp').innerHTML = `<div class="wd-table"><table>${html}${rows}</table></div>
-    <p class="wd-note">Si los modelos coinciden, el pronóstico es fiable; si discrepan, hay incertidumbre.</p>`;
+  const shown = order.filter((m) => !hidden.includes(m.id));
+  const off = CMP_MODELS.filter((m) => hidden.includes(m.id));
+  const box = body.querySelector('#dtCmp');
+  box.innerHTML = shown.map(block).join('') +
+    (off.length ? `<div class="cmp-off">Ocultos: ${off.map((m) => `<button data-show="${m.id}">${m.name} ＋</button>`).join('')}</div>` : '') +
+    '<p class="wd-note">Si los modelos coinciden, el pronóstico es fiable; si discrepan, hay incertidumbre. Desliza una tabla y las demás la siguen.</p>';
+  const toggle = (key, list, id) => { save(key, list.includes(id) ? list.filter((x) => x !== id) : [...list, id]); models(body); };
+  box.querySelectorAll('[data-hide]').forEach((b) => { b.onclick = () => toggle('cmp.hidden', hidden, b.dataset.hide); });
+  box.querySelectorAll('[data-show]').forEach((b) => { b.onclick = () => toggle('cmp.hidden', hidden, b.dataset.show); });
+  box.querySelectorAll('[data-pin]').forEach((b) => { b.onclick = () => toggle('cmp.pinned', pinned, b.dataset.pin); });
+  // Desplazar una tabla mueve todas a la vez (mismas horas en columna)
+  const tables = [...box.querySelectorAll('.cmp-table')];
+  let syncing = false;
+  tables.forEach((t) => t.addEventListener('scroll', () => {
+    if (syncing) return;
+    syncing = true;
+    tables.forEach((o) => { if (o !== t) o.scrollLeft = t.scrollLeft; });
+    requestAnimationFrame(() => { syncing = false; });
+  }, { passive: true }));
 }
 
 function scrollToNow(body) {
@@ -211,6 +259,8 @@ async function renderAll() {
   const top = sheet.querySelector('.wd-top');
   const body = sheet.querySelector('.wd-body');
   body.classList.remove('dark');
+  sheet.classList.toggle('tall', view.tab === 'models');
+  sheet.querySelector('[data-view]').value = view.tab;
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
   try {
     const d = await getForecast();
@@ -232,7 +282,7 @@ export function openDetail(root) {
   }
   sheet.innerHTML = `
     <button class="w-close wd-close" data-close aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
-    <div class="wd-head"><div class="wd-top"></div><a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a></div>
+    <div class="wd-head"><div class="wd-top"></div><a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a><button class="wd-cmp" data-cmp>Comparar ›</button></div>
     <div class="wd-srcwrap"></div>
     <div class="wd-body"></div>
     <div class="wd-bar">
@@ -244,6 +294,7 @@ export function openDetail(root) {
   sheet.querySelector('[data-close]').onclick = closeDetail;
   sheet.querySelector('[data-step]').onchange = (e) => { view.step = +e.target.value; renderAll(); };
   sheet.querySelector('[data-view]').onchange = (e) => { view.tab = e.target.value; renderAll(); };
+  sheet.querySelector('[data-cmp]').onclick = () => { view.tab = view.tab === 'models' ? 'basic' : 'models'; renderAll(); };
   // Cambiar la fuente cambia el modelo de toda la app (y vuelve a abrir este panel)
   sheet.querySelector('[data-model]').onchange = (e) => { settings.model = e.target.value; saveSettings(); };
   renderAll();

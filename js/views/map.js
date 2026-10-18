@@ -19,7 +19,7 @@ const LEVELS = {
   '500hPa': { label: '5.500 m', ws: 'wind_speed_500hPa', wd: 'wind_direction_500hPa', t: 'temperature_500hPa', rh: 'relative_humidity_500hPa', group: 'l500hPa' },
   '300hPa': { label: '9.000 m', ws: 'wind_speed_300hPa', wd: 'wind_direction_300hPa', t: 'temperature_300hPa', rh: 'relative_humidity_300hPa', group: 'l300hPa' },
 };
-const lvVars = (p) => [`wind_speed_${p}`, `wind_direction_${p}`, `temperature_${p}`, `relative_humidity_${p}`];
+const lvVars = (p) => [`wind_speed_${p}`, `wind_direction_${p}`, `temperature_${p}`, `relative_humidity_${p}`, `geopotential_height_${p}`];
 
 // ---------- Grupos de datos (cada uno es una petición; se descargan solo cuando hacen falta) ----------
 const GROUPS = {
@@ -80,6 +80,7 @@ const LAYERS = {
   pm25: { label: 'PM2.5', cat: 'Aire', src: () => ['air', 'pm2_5'], scale: 'pm25', range: () => [0, 150], unit: 'ugm3' },
   dust: { label: 'Calima (polvo)', cat: 'Aire', src: () => ['air', 'dust'], scale: 'dust', range: () => [0, 1000], unit: 'ugm3' },
   radar: { label: 'Radar de lluvia', short: 'Radar', cat: 'Observación', kind: 'radar' },
+  radarsat: { label: 'Radar + satélite', cat: 'Observación', kind: 'radar', sat: true },
   sat: { label: 'Satélite', cat: 'Observación', kind: 'sat' },
 };
 const QUICK = ['wind', 'rain', 'temp', 'clouds', 'radar', 'sat', 'waves', 'pressure'];
@@ -114,6 +115,7 @@ const ICON = {
   pause: '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
 };
 const el = (id) => document.getElementById(id);
+const clampInt = (v, a, b) => Math.max(a, Math.min(b, v));
 function setStatus(msg) { const s = el('mapStatusTxt'); if (s) s.textContent = msg; }
 
 // ---------- Rejilla ----------
@@ -185,6 +187,7 @@ async function loadData(force = false) {
     S.field.setGrid(S.grid);
     prepareLayer();
     buildDays();
+    placeBubble();
     setStatus(`${api.MODELS.find((m) => m.id === settings.model)?.short || settings.model} · ${spec.nx}×${spec.ny} puntos`);
   } catch (e) {
     setStatus(e.message);
@@ -229,7 +232,14 @@ function currentStyle() {
   if (S.particles && S.layer !== 'sat') style.flow = { u: flowKey + '_u', v: flowKey + '_v', k: S.level === '300hPa' || S.level === '500hPa' ? 0.5 : 1 };
   // Isolíneas
   const isoMode = spec.iso ? 'pressure' : S.iso;
-  if (isoMode === 'pressure') style.iso = { var: 'pressure_msl', step: settings.pressure === 'hpa' ? 4 : 4, fmt: (v) => f.pressure(v), extrema: true };
+  if (isoMode === 'pressure') {
+    // En altura, como en Windy, se dibujan isohipsas (altura geopotencial, en dam) en vez de isobaras
+    if (spec.levels && S.level.endsWith('hPa')) {
+      style.iso = { var: `geopotential_height_${S.level}`, step: S.level === '850hPa' || S.level === '700hPa' ? 30 : 60, fmt: (v) => String(Math.round(v / 10)), extrema: true };
+    } else {
+      style.iso = { var: 'pressure_msl', step: 4, fmt: (v) => f.pressure(v), extrema: true };
+    }
+  }
   if (isoMode === 'temp') style.iso = { var: spec.levels ? LEVELS[S.level].t : 'temperature_2m', step: 5, fmt: (v) => f.temp(v) };
   // Números sobre el mapa
   if (S.values && style.var) style.values = { var: style.var, fmt: UNITS[spec.unit].fmt };
@@ -281,7 +291,7 @@ async function loadRadar() {
 }
 function showRadarFrame() {
   S.radar.layers.forEach((l, i) => {
-    if (S.layer !== 'radar') { if (S.map.hasLayer(l)) S.map.removeLayer(l); return; }
+    if (LAYERS[S.layer].kind !== 'radar') { if (S.map.hasLayer(l)) S.map.removeLayer(l); return; }
     if (!S.map.hasLayer(l)) l.addTo(S.map);
     l.setOpacity(i === S.radar.idx ? 0.8 : 0);
   });
@@ -290,8 +300,9 @@ function showRadarFrame() {
 // ---------- Satélite ----------
 function showSat() {
   if (S.satLayer) { S.map.removeLayer(S.satLayer); S.satLayer = null; }
-  if (S.layer !== 'sat') return;
-  const s = SATS[S.sat];
+  const spec = LAYERS[S.layer];
+  if (spec.kind !== 'sat' && !spec.sat) return;
+  const s = spec.sat ? SATS.ir : SATS[S.sat];
   if (s.gibs) {
     const d = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     S.satLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${d}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, {
@@ -319,7 +330,7 @@ function updateLegend() {
   const spec = LAYERS[S.layer];
   const box = el('mapLegend');
   if (spec.kind === 'radar') {
-    box.innerHTML = `<span>Débil</span><div class="bar" style="background:linear-gradient(90deg,#88ddee,#0099cc,#0077aa,#ffee00,#ff9900,#ff4400,#c10000,#ff00ff)"></div><span>Intensa</span>`;
+    box.innerHTML = `<span>Débil</span><div class="bar" style="flex:1;background:linear-gradient(90deg,#88ddee,#0099cc,#0077aa,#ffee00,#ff9900,#ff4400,#c10000,#ff00ff)"></div><span>Intensa</span>`;
     return;
   }
   if (spec.kind === 'sat') { box.innerHTML = ''; return; }
@@ -389,28 +400,66 @@ function updateSlider() {
     r.disabled = false; r.min = S.t0; r.max = S.grid.nt - 1; r.value = S.t;
   }
   el('mapTime').textContent = timeLabel();
+  placeBubble();
   highlightStrip();
 }
 
-function setTime(i) {
-  if (LAYERS[S.layer].kind === 'radar') { S.radar.idx = i; showRadarFrame(); } else { S.t = i; S.field.setTime(i); refreshPick(); }
+function setTime(i, frac = 0) {
+  if (LAYERS[S.layer].kind === 'radar') { S.radar.idx = i; showRadarFrame(); } else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) refreshPick(); }
   const r = el('mapRange');
   if (r) r.value = i;
   el('mapTime').textContent = timeLabel();
-  highlightStrip();
+  placeBubble();
+  if (!frac) highlightStrip();
+}
+
+// Burbuja con la hora encima del deslizador, como en Windy
+function placeBubble() {
+  const r = el('mapRange'), b = el('tlBubble');
+  if (!r || !b) return;
+  const spec = LAYERS[S.layer];
+  if (spec.kind === 'sat' || r.disabled) { b.classList.add('hidden'); return; }
+  b.classList.remove('hidden');
+  const min = +r.min, max = +r.max;
+  const pos = max > min ? (+r.value + (S.tf || 0) - min) / (max - min) : 0;
+  const w = r.clientWidth - 16;
+  b.style.left = 8 + pos * w + 'px';
+  if (spec.kind === 'radar') {
+    const fr = S.radar.frames[S.radar.idx];
+    b.textContent = fr ? f.localTimeFromUnix(fr.time) : '';
+  } else if (S.grid) {
+    const d = new Date(S.grid.times[S.t] + ':00Z');
+    const mins = Math.round((S.tf || 0) * 60);
+    b.textContent = `${DAYS_ES[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+  }
 }
 
 function togglePlay() {
   const btn = el('mapPlay');
-  if (S.playing) { clearInterval(S.playing); S.playing = null; btn.innerHTML = ICON.play; return; }
+  if (S.playing) {
+    clearInterval(S.playing);
+    S.playing = null;
+    btn.innerHTML = ICON.play;
+    if (S.tf) setTime(S.t, 0);
+    return;
+  }
   btn.innerHTML = ICON.pause;
+  const radar = LAYERS[S.layer].kind === 'radar';
+  // Con modelo avanza en cuartos de hora interpolados para que la animación sea fluida
   S.playing = setInterval(() => {
     const r = el('mapRange');
     if (r.disabled) return;
-    let v = +r.value + 1;
-    if (v > +r.max) v = +r.min;
-    setTime(v);
-  }, LAYERS[S.layer].kind === 'radar' ? 550 : 650);
+    if (radar) {
+      let v = +r.value + 1;
+      if (v > +r.max) v = +r.min;
+      setTime(v);
+      return;
+    }
+    let t = S.t, fr = (S.tf || 0) + 0.25;
+    if (fr >= 1) { t++; fr = 0; }
+    if (t >= +r.max) { t = +r.min; fr = 0; }
+    setTime(t, fr);
+  }, radar ? 550 : 170);
 }
 function stopPlay() { if (S.playing) togglePlay(); }
 
@@ -601,6 +650,7 @@ function buildUI(root) {
       <div class="map-time">
         <button class="play-btn" id="mapPlay">${ICON.play}</button>
         <div class="tl">
+          <span class="tl-bubble hidden" id="tlBubble"></span>
           <input type="range" id="mapRange" min="0" max="0" value="0">
           <div class="tl-days" id="mapDays"></div>
         </div>
@@ -614,6 +664,20 @@ function buildUI(root) {
   buildLayerSheet();
   el('mapSatSel').append(selectEl(Object.entries(SATS).map(([k, v]) => [k, v.label]), S.sat, (v) => { S.sat = v; showSat(); }));
   el('mapRange').addEventListener('input', (e) => setTime(+e.target.value));
+  // Atajos: ← → hora anterior/siguiente, espacio reproducir
+  document.addEventListener('keydown', (e) => {
+    if (!root.classList.contains('active') || e.target.closest('input[type=search], select, textarea')) return;
+    const r = el('mapRange');
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const v = clampInt(+r.value + (e.key === 'ArrowRight' ? 1 : -1), +r.min, +r.max);
+      setTime(v);
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      togglePlay();
+    }
+  });
+  window.addEventListener('resize', placeBubble);
   el('mapPlay').onclick = togglePlay;
   el('mapParticles').onclick = () => { S.particles = !S.particles; sideState(); prepareLayer(); };
   el('mapIso').onclick = () => {
@@ -669,8 +733,9 @@ export default {
   render(root) {
     if (!S.map) {
       buildUI(root);
+      const view = load('map.view', null);
       const map = L.map('map', { zoomControl: true, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
-        .setView([state.place.lat, state.place.lon], 6);
+        .setView(view ? [view[0], view[1]] : [state.place.lat, state.place.lon], view ? view[2] : 6);
       S.map = map;
       map.createPane('labelsPane').style.zIndex = 380;
       map.getPane('labelsPane').style.pointerEvents = 'none';
@@ -686,16 +751,21 @@ export default {
       S.field = new FieldLayer(map);
       S.marker = L.marker([state.place.lat, state.place.lon], { icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16, 16] }) }).addTo(map);
       map.on('moveend', loadDebounced);
+      map.on('moveend', () => save('map.view', [map.getCenter().lat, map.getCenter().lng, map.getZoom()]));
+      // Un toque elige el punto; si llega un segundo toque (doble toque = zoom) se cancela
+      let clickTimer = null;
       map.on('click', (e) => {
         el('mapMenu').classList.add('hidden');
         el('layerSheet').classList.add('hidden');
-        pickAt(e.latlng);
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => pickAt(e.latlng), 280);
       });
+      map.on('dblclick', () => clearTimeout(clickTimer));
       map.whenReady(() => { S.field.redraw(); loadData(true); });
       renderForecastStrip();
       loadRadar();
       applyLayer();
-      setInterval(() => { if (S.layer === 'radar') loadRadar(); }, 5 * 60e3);
+      setInterval(() => { if (LAYERS[S.layer].kind === 'radar') loadRadar(); }, 5 * 60e3);
       return;
     }
     // Re-render por cambio de lugar o de ajustes

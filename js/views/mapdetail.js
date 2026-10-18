@@ -222,12 +222,19 @@ async function models(body) {
   const shown = order.filter((m) => !hidden.includes(m.id));
   const off = CMP_MODELS.filter((m) => hidden.includes(m.id));
   const box = body.querySelector('#dtCmp');
-  box.innerHTML = shown.map(block).join('') +
+  box.innerHTML = daySummary(h, get, shown, nowKey) + shown.map(block).join('') +
     (off.length ? `<div class="cmp-off">Ocultos: ${off.map((m) => `<button data-show="${m.id}">${m.name} ＋</button>`).join('')}</div>` : '') +
     '<p class="wd-note">Si los modelos coinciden, el pronóstico es fiable; si discrepan, hay incertidumbre. Desliza una tabla y las demás la siguen.</p>';
   const toggle = (key, list, id) => { save(key, list.includes(id) ? list.filter((x) => x !== id) : [...list, id]); models(body); };
   box.querySelectorAll('[data-hide]').forEach((b) => { b.onclick = () => toggle('cmp.hidden', hidden, b.dataset.hide); });
   box.querySelectorAll('[data-show]').forEach((b) => { b.onclick = () => toggle('cmp.hidden', hidden, b.dataset.show); });
+  // Tocar un día del resumen lleva todas las tablas a ese día
+  box.querySelectorAll('.cmp-sum [data-goday]').forEach((el) => {
+    el.onclick = () => {
+      box.querySelectorAll('.cmp-model').forEach((m) => goDay(m, el.dataset.goday));
+      box.querySelector('.cmp-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+  });
   box.querySelectorAll('[data-pin]').forEach((b) => { b.onclick = () => toggle('cmp.pinned', pinned, b.dataset.pin); });
   // Desplazar una tabla mueve todas a la vez (mismas horas en columna)
   const tables = [...box.querySelectorAll('.cmp-table')];
@@ -238,6 +245,47 @@ async function models(body) {
     tables.forEach((o) => { if (o !== t) o.scrollLeft = t.scrollLeft; });
     requestAnimationFrame(() => { syncing = false; });
   }, { passive: true }));
+}
+
+// Resumen por días: máxima/mínima, lluvia y un icono por modelo, más una fila de acuerdo entre modelos
+function dayIcon(codes, rainMm) {
+  const day = codes.filter(f.isNum);
+  if (!day.length) return null;
+  // Con lluvia apreciable, el código de precipitación más intenso; si no, el más repetido
+  if (rainMm >= 1) return Math.max(...day);
+  const count = {};
+  day.forEach((c) => { if (c < 50) count[c] = (count[c] || 0) + 1; });
+  const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return best ? +best[0] : Math.max(...day);
+}
+function daySummary(h, get, shown, nowKey) {
+  const today = nowKey.slice(0, 10);
+  const days = [...new Set(h.time.map((t) => t.slice(0, 10)))].filter((d) => d >= today).slice(0, view.cmpDays);
+  const stats = shown.map((m) => days.map((day) => {
+    const temp = get('temperature_2m', m.id), rain = get('precipitation', m.id), code = get('weather_code', m.id);
+    const ii = h.time.map((t, i) => (t.startsWith(day) ? i : -1)).filter((i) => i >= 0 && f.isNum(temp[i]));
+    if (ii.length < 12) return null;
+    const ts = ii.map((i) => temp[i]);
+    const mm = ii.reduce((a, i) => a + (rain[i] || 0), 0);
+    const daytime = ii.filter((i) => { const hr = +h.time[i].slice(11, 13); return hr >= 8 && hr <= 20; });
+    return { max: Math.max(...ts), min: Math.min(...ts), mm, code: dayIcon(daytime.map((i) => code[i]), mm) };
+  }));
+  const head = days.map((day) => { const p = f.parts(day); return `<th data-goday="${day}">${DIAS[p.wd].slice(0, 3)} ${p.D}</th>`; }).join('');
+  const rows = shown.map((m, r) => `<tr><th class="rowlab">${m.name}</th>${stats[r].map((x) => (x ? `<td>
+      ${f.isNum(x.code) ? wxIcon(x.code, 1) : ''}<b>${f.temp(x.max)}</b> <span>${f.temp(x.min)}</span>${x.mm >= 0.5 ? `<i>${f.precip(x.mm)}</i>` : ''}</td>` : '<td class="none">–</td>')).join('')}</tr>`).join('');
+  // Acuerdo: cuántos modelos dan lluvia (≥ 1 mm) y diferencia entre la máxima más alta y la más baja
+  const agree = days.map((_, c) => {
+    const col = stats.map((row) => row[c]).filter(Boolean);
+    if (col.length < 2) return '<td class="none">–</td>';
+    const wet = col.filter((x) => x.mm >= 1).length;
+    const spread = Math.round(Math.max(...col.map((x) => x.max)) - Math.min(...col.map((x) => x.max)));
+    const sure = spread <= 2 && (wet === 0 || wet === col.length);
+    return `<td class="${sure ? 'ok' : spread >= 5 || (wet && wet < col.length) ? 'doubt' : ''}"><i>☔ ${wet}/${col.length}</i><span>±${Math.ceil(spread / 2)}°</span></td>`;
+  }).join('');
+  return `<div class="cmp-sum"><div class="wd-table"><table>
+    <tr class="r-head"><th class="rowlab"></th>${head}</tr>${rows}
+    <tr class="r-agree"><th class="rowlab">Acuerdo</th>${agree}</tr>
+  </table></div><p class="wd-note">«☔ 4/7»: cuatro de siete modelos dan lluvia ese día. «±2°»: lo que se separan sus máximas. Verde = coinciden; naranja = hay dudas. Toca un día para verlo por horas.</p></div>`;
 }
 
 function scrollToNow(body) {

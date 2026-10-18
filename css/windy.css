@@ -183,3 +183,17 @@ body.map-mode { background: #2b2b2b; }
 .cmp-table td.windc .arrow { width: 12px; height: 12px; vertical-align: -1px; }
 .cmp-off { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px; font-size: 12.5px; color: #555; }
 .cmp-off button { background: #e3e3e3; border-radius: 999px; padding: 4px 10px; font-size: 12.5px; color: #333; }
+
+.cmp-sum { background: #fff; }
+.cmp-sum th[data-goday] { cursor: pointer; font-weight: 500; font-size: 12px; color: #333; padding: 6px 0 2px; letter-spacing: .02em; }
+.cmp-sum td { min-width: 58px; height: auto; padding: 4px 2px; border-left: 1px solid #eee; line-height: 1.15; font-size: 12.5px; }
+.cmp-sum td .wx-ico { display: block; width: 24px; height: 24px; margin: 0 auto 1px; }
+.cmp-sum td span { color: #888; }
+.cmp-sum td i { display: block; font-style: normal; color: #1f6fd1; font-size: 11.5px; font-weight: 500; }
+.cmp-sum th.rowlab { min-width: 92px; color: #333; font-weight: 500; }
+.cmp-sum tr + tr td, .cmp-sum tr + tr th { border-top: 1px solid #f0f0f0; }
+.cmp-sum td.none { color: #bbb; }
+.cmp-sum tr.r-agree td { background: #f4f4f4; }
+.cmp-sum tr.r-agree td i { color: #333; }
+.cmp-sum tr.r-agree td.ok { background: #dff3df; }
+.cmp-sum tr.r-agree td.doubt { background: #fde9cf; }

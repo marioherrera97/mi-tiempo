@@ -35,7 +35,7 @@ function headRows(times, idx) {
     let n = 0;
     while (k + n < idx.length && times[idx[k + n]].startsWith(day)) n++;
     const p = f.parts(day);
-    days += `<td colspan="${n}" class="${k ? 'daystart' : ''}"><span>${n >= 3 ? DIAS[p.wd] + ' ' + p.D : p.D}</span></td>`;
+    days += `<td colspan="${n}" class="${k ? 'daystart' : ''}" data-day="${day}"><span>${n >= 3 ? DIAS[p.wd] + ' ' + p.D : p.D}</span></td>`;
     k += n;
   }
   const isStart = (j) => j > 0 && times[idx[j]].slice(0, 10) !== times[idx[j - 1]].slice(0, 10);
@@ -53,7 +53,7 @@ function summary(d) {
   const dd = d.daily, h = d.hourly;
   const today = d.current.time.slice(0, 10);
   const ti = Math.max(0, dd.time.indexOf(today));
-  const n = Math.min(7, dd.time.length - ti);
+  const n = Math.min(16, dd.time.length - ti); // todos los días (se deslizan en horizontal)
   const days = dd.time.slice(ti, ti + n);
   // Silueta: temperatura hora a hora de esos días
   const i0 = h.time.findIndex((t) => t.startsWith(days[0]));
@@ -66,13 +66,13 @@ function summary(d) {
   const rain = h.precipitation.slice(i0, i0 + n * 24).map((v, k) => (v >= 0.1 ? `<i style="left:${(k / (n * 24)) * 100}%;opacity:${Math.min(1, 0.35 + v / 3).toFixed(2)}"></i>` : '')).join('');
   return `<div class="wd-days" style="--n:${n}">
       <svg class="wd-mountain" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${area}"/></svg>
-      ${days.map((day, k) => `<div class="wd-day${k === 0 ? ' today' : ''}">
+      ${days.map((day, k) => `<div class="wd-day${k === 0 ? ' today' : ''}" data-day="${day}">
         <span class="wd-dn">${DIAS[f.parts(day).wd].slice(0, 3)}</span>
         ${wxIcon(dd.weather_code[ti + k], 1)}
         <span class="wd-t">${f.temp(dd.temperature_2m_min[ti + k])} / <b>${f.temp(dd.temperature_2m_max[ti + k])}</b></span>
       </div>`).join('')}
     </div>
-    <div class="wd-rainrow"><span class="wd-drops">💧</span><div class="wd-rain">${rain}</div></div>`;
+    <div class="wd-rainrow" style="--n:${n}"><span class="wd-drops">💧</span><div class="wd-rain">${rain}</div></div>`;
 }
 
 // ---------- Vistas ----------
@@ -198,6 +198,13 @@ function scrollToNow(body) {
   if (now && wrap) wrap.scrollLeft = Math.max(0, now.offsetLeft - 120);
 }
 
+function goDay(body, day) {
+  const wrap = body.querySelector('.wd-table');
+  const td = wrap?.querySelector(`tr.r-day td[data-day="${day}"]`);
+  const lab = wrap?.querySelector('th.rowlab');
+  if (td) wrap.scrollLeft = Math.max(0, td.offsetLeft - (lab?.offsetWidth || 0));
+}
+
 const RENDER = { basic, meteo, waves, models };
 
 async function renderAll() {
@@ -207,7 +214,10 @@ async function renderAll() {
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
   try {
     const d = await getForecast();
-    top.innerHTML = summary(d) + `<a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a>${d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : ''}`;
+    top.innerHTML = summary(d);
+    sheet.querySelector('.wd-srcwrap').innerHTML = d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : '';
+    // Tocar un día lleva la tabla a ese día, como en Windy
+    top.querySelectorAll('[data-day]').forEach((el) => { el.onclick = () => goDay(sheet.querySelector('.wd-body'), el.dataset.day); });
     await RENDER[view.tab](body, d);
   } catch (e) {
     body.innerHTML = `<p class="wd-note">${f.esc(e.message)}</p>`;
@@ -222,7 +232,8 @@ export function openDetail(root) {
   }
   sheet.innerHTML = `
     <button class="w-close wd-close" data-close aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
-    <div class="wd-top"></div>
+    <div class="wd-head"><div class="wd-top"></div><a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a></div>
+    <div class="wd-srcwrap"></div>
     <div class="wd-body"></div>
     <div class="wd-bar">
       <label><span>pronóstico</span><select data-step>${[[1, '1 hora'], [3, '3 horas']].map(([v, l]) => `<option value="${v}" ${v === view.step ? 'selected' : ''}>${l}</option>`).join('')}</select></label>

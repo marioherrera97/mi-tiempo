@@ -289,8 +289,8 @@ export class FieldLayer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     const shadow = 3.5 * (this.isoCanvas.dpr || 1);
-    const FONT_NAME = (mine) => `${mine ? 700 : 600} 12px Roboto, "Segoe UI", system-ui, sans-serif`;
-    const FONT_VAL = '700 15px Roboto, "Segoe UI", system-ui, sans-serif';
+    const FONT_NAME = (mine) => `${mine ? 700 : 500} 11px Roboto, "Segoe UI", system-ui, sans-serif`;
+    const FONT_VAL = '500 12.5px Roboto, "Segoe UI", system-ui, sans-serif';
     // Texto blanco con halo difuso (dos pasadas de sombra), como las etiquetas de Windy
     const soft = (txt, x, y) => {
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
@@ -313,15 +313,15 @@ export class FieldLayer {
       const wName = ctx.measureText(name).width;
       ctx.font = FONT_VAL;
       const wVal = val ? ctx.measureText(val).width : 0;
-      const w = Math.max(wName, wVal) + 8, h = val ? 34 : 18;
-      if (!fits(x - w / 2, y - 14, w, h)) return false;
+      const w = Math.max(wName, wVal) + 8, h = val ? 29 : 16;
+      if (!fits(x - w / 2, y - 12, w, h)) return false;
       ctx.font = FONT_NAME(mine);
       ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.95)';
       soft(name, x, y);
       if (val) {
         ctx.font = FONT_VAL;
         ctx.fillStyle = '#ffffff';
-        soft(val, x, y + 16);
+        soft(val, x, y + 14);
       }
       return true;
     };

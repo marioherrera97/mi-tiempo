@@ -207,7 +207,7 @@ async function renderAll() {
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
   try {
     const d = await getForecast();
-    top.innerHTML = summary(d) + `${d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : ''}<a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a>`;
+    top.innerHTML = summary(d) + `<a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a>${d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : ''}`;
     await RENDER[view.tab](body, d);
   } catch (e) {
     body.innerHTML = `<p class="wd-note">${f.esc(e.message)}</p>`;

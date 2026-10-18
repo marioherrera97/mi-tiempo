@@ -423,9 +423,13 @@ async function showBorders() {
     S.borderHalo = [L.polyline(coast, opt), L.polyline(countries, opt)];
     S.borderInk = [L.polyline(coast, opt), L.polyline(countries, opt)];
     S.regionLines = L.polyline(regions.map((r) => toLatLngs(r)), { ...opt, dashArray: '3 4' });
-    S.borderLayers = [...S.borderHalo, ...S.borderInk, S.regionLines];
+    // El mar algo más oscuro con el borde difuminado: la tierra parece en relieve, como en Windy
+    S.seaShade = L.polygon([[[-85, -200], [85, -200], [85, 200], [-85, 200]], ...land.map((r) => toLatLngs(r))],
+      { renderer: L.canvas({ pane: 'seaPane', padding: 0.4 }), interactive: false, stroke: false, fill: true, fillColor: '#000', fillOpacity: 1, fillRule: 'evenodd' });
+    S.borderLayers = [...S.borderHalo, ...S.borderInk, S.regionLines, S.seaShade];
     styleBorders();
-    S.borderLayers.forEach((l) => { if (l !== S.regionLines) l.addTo(S.map); });
+    S.borderLayers.forEach((l) => { if (l !== S.regionLines && l !== S.seaShade) l.addTo(S.map); });
+    styleBorders();
     toggleRegions();
   } catch { /* sin conexión: se queda sin líneas */ }
 }
@@ -436,11 +440,15 @@ function styleBorders() {
   const field = !LAYERS[S.layer].kind;
   const lightBase = ['light', 'osm', 'topo'].includes(settings.mapBase);
   const dark = field || lightBase;
-  const ink = dark ? '#10161d' : '#ffffff', halo = dark ? '#ffffff' : '#000000';
-  S.borderInk[0].setStyle({ color: ink, weight: 1.5, opacity: dark ? 0.8 : 0.9 });
-  S.borderInk[1].setStyle({ color: ink, weight: 1.4, opacity: dark ? 0.7 : 0.8 });
-  S.borderHalo.forEach((l) => l.setStyle({ color: halo, weight: 3, opacity: dark ? 0.12 : 0.35 }));
-  S.regionLines.setStyle({ color: ink, weight: 0.9, opacity: 0.5 });
+  // Sobre colores, como Windy: sin raya dura en la costa (la marca la sombra del mar) y fronteras finas y tenues
+  const ink = dark ? '#262626' : '#ffffff', halo = '#000000';
+  S.borderInk[0].setStyle({ color: ink, weight: dark ? 0.8 : 1.5, opacity: dark ? 0.35 : 0.9 });
+  S.borderInk[1].setStyle({ color: ink, weight: dark ? 0.9 : 1.4, opacity: dark ? 0.32 : 0.8 });
+  S.borderHalo.forEach((l) => l.setStyle({ color: halo, weight: 3, opacity: dark ? 0 : 0.35 }));
+  S.regionLines.setStyle({ color: ink, weight: 0.8, opacity: dark ? 0.22 : 0.5 });
+  // Sombra del mar solo sobre los colores del modelo
+  if (field && !S.map.hasLayer(S.seaShade)) S.seaShade.addTo(S.map);
+  if (!field && S.map.hasLayer(S.seaShade)) S.map.removeLayer(S.seaShade);
 }
 
 // ---------- Lagos y embalses en tono oscuro sobre los colores (como en Windy) ----------
@@ -456,8 +464,15 @@ async function showWater() {
     if (!S.water || S.waterLayers) return;
     const renderer = L.canvas({ pane: 'waterPane', padding: 0.4 });
     const opt = { renderer, interactive: false, smoothFactor: 1, lineJoin: 'round', lineCap: 'round' };
-    S.lakeLayer = L.polygon(lakes.map((r) => [toLatLngs(r)]), { ...opt, stroke: true, weight: 0.8, fill: true, fillRule: 'nonzero' });
-    S.riverLayers = [];
+    // Como Windy: de lejos solo los grandes; los embalses pequeños aparecen al acercarse
+    const size = (r) => {
+      let x0 = 180, x1 = -180, y0 = 90, y1 = -90;
+      for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1]); }
+      return Math.max(x1 - x0, y1 - y0);
+    };
+    const poly = (rings, tier) => Object.assign(L.polygon(rings.map((r) => [toLatLngs(r)]), { ...opt, stroke: true, weight: 0.8, fill: true, fillRule: 'nonzero' }), { tier });
+    S.lakeLayer = poly(lakes.filter((r) => size(r) >= 0.25), { zoom: 0 });
+    S.riverLayers = [poly(lakes.filter((r) => size(r) >= 0.08 && size(r) < 0.25), { zoom: 8 }), poly(lakes.filter((r) => size(r) < 0.08), { zoom: 10 })];
     S.waterLayers = [S.lakeLayer, ...S.riverLayers];
     styleWater();
     S.lakeLayer.addTo(S.map);
@@ -470,7 +485,7 @@ function styleWater() {
   const field = !LAYERS[S.layer].kind;
   const c = field ? '#06212e' : '#4d8fb3';
   S.lakeLayer.setStyle({ color: c, opacity: field ? 0.45 : 0.6, fillColor: c, fillOpacity: field ? 0.38 : 0.35 });
-  S.riverLayers.forEach((l) => l.setStyle({ color: c, opacity: field ? 0.5 : 0.6, weight: l.tier.weight }));
+  S.riverLayers.forEach((l) => l.setStyle({ color: c, opacity: field ? 0.45 : 0.6, fillColor: c, fillOpacity: field ? 0.38 : 0.35 }));
 }
 function toggleRivers() {
   if (!S.riverLayers) return;
@@ -1229,7 +1244,7 @@ export default {
     if (!S.map) {
       buildUI(root);
       const view = load('map.view', null);
-      const map = L.map('map', { zoomControl: false, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
+      const map = L.map('map', { zoomControl: false, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 110, wheelDebounceTime: 20, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
         .setView(view ? [view[0], view[1]] : [state.place.lat, state.place.lon], view ? view[2] : 6);
       S.map = map;
       map.createPane('labelsPane').style.zIndex = 380;
@@ -1237,6 +1252,8 @@ export default {
       map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
       // Agua entre los colores (350) y el relieve (356); multiply la oscurece sin tapar el color de debajo
+      // Sombra del mar: negro difuminado y muy tenue, multiplicado sobre los colores
+      Object.assign(map.createPane('seaPane').style, { zIndex: 354, pointerEvents: 'none', opacity: 0.16, filter: 'blur(4px)', mixBlendMode: 'multiply' });
       Object.assign(map.createPane('waterPane').style, { zIndex: 353, pointerEvents: 'none', mixBlendMode: 'multiply' });
       // Relieve sombreado sobre los colores (se mezcla con ellos como en Windy)
       const relief = map.createPane('reliefPane');

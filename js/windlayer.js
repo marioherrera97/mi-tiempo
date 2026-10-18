@@ -50,10 +50,15 @@ export class FieldLayer {
     // se ocultan: estirados se desplazarían. Al terminar se redibujan en su sitio, como en Windy.
     const hideText = (on) => { this.isoCanvas.style.visibility = on ? 'hidden' : ''; };
     this._h = {
-      movestart: () => this.clearParticles(),
-      moveend: () => { this.redraw(); hideText(false); },
+      movestart: () => { clearTimeout(this._settle); this.clearParticles(); },
+      // Se redibuja cuando el mapa se queda quieto: durante un zoom continuo (rueda, pellizco)
+      // solo se escalan los lienzos y así no da tirones
+      moveend: () => {
+        clearTimeout(this._settle);
+        this._settle = setTimeout(() => { this.redraw(); hideText(false); }, 160);
+      },
       resize: () => this.redraw(),
-      zoomstart: () => { this.clearParticles(); hideText(true); },
+      zoomstart: () => { clearTimeout(this._settle); this.clearParticles(); hideText(true); },
       zoomanim: (e) => this._animateZoom(e),
       zoom: () => this._scaleToView(),
       // (se vuelven a mostrar en moveend, que Leaflet lanza siempre tras el zoom y ya con el redibujado hecho)

@@ -400,7 +400,9 @@ table.simple .r { text-align: right; }
 .pop-actions button { padding: 6px 10px; font-size: 12.5px; }
 .leaflet-control-zoom { display: none; }
 .wind-canvas, .field-canvas, .iso-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
-.field-canvas { opacity: .72; }
+.field-canvas { opacity: .82; }
+/* Nombres de ciudades más legibles sobre los colores */
+.leaflet-labelsPane-pane { filter: brightness(1.9) contrast(1.15); }
 .pin { width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.3); }
 @media (min-width: 720px) {
   .leaflet-control-zoom { display: block; }

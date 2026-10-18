@@ -102,7 +102,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', particles: true, iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), particles: true, iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -246,9 +246,63 @@ function currentStyle() {
   return style;
 }
 
-let landPromise = null;
+const geoCache = {};
+const geoData = (name) => (geoCache[name] ||= fetch(`vendor/${name}.json`).then((r) => r.json()).catch((e) => { delete geoCache[name]; throw e; }));
+
+let landLoaded = false;
 function loadLand() {
-  landPromise ||= fetch('vendor/land.json').then((r) => r.json()).then((rings) => S.field.setLand(rings)).catch(() => { landPromise = null; });
+  if (landLoaded) return;
+  landLoaded = true;
+  geoData('land').then((rings) => S.field.setLand(rings)).catch(() => { landLoaded = false; });
+}
+
+// ---------- Costas, fronteras y provincias por encima de los colores (como en Windy) ----------
+const toLatLngs = (flat, close) => {
+  const out = [];
+  for (let i = 0; i < flat.length; i += 2) out.push([flat[i + 1], flat[i]]);
+  if (close && out.length) out.push(out[0]);
+  return out;
+};
+async function showBorders() {
+  if (S.borderLayers) S.borderLayers.forEach((l) => S.map.removeLayer(l));
+  S.borderLayers = null;
+  if (!S.borders) return;
+  try {
+    const [land, borders, regions] = await Promise.all([geoData('land'), geoData('borders'), geoData('regions')]);
+    if (!S.borders) return;
+    const renderer = L.canvas({ pane: 'bordersPane', padding: 0.4 });
+    const opt = { renderer, interactive: false, smoothFactor: 1.2, lineJoin: 'round' };
+    const coast = land.map((r) => toLatLngs(r, true));
+    const countries = borders.map((r) => toLatLngs(r));
+    S.borderHalo = [L.polyline(coast, opt), L.polyline(countries, opt)];
+    S.borderInk = [L.polyline(coast, opt), L.polyline(countries, opt)];
+    S.regionLines = L.polyline(regions.map((r) => toLatLngs(r)), { ...opt, dashArray: '3 4' });
+    S.borderLayers = [...S.borderHalo, ...S.borderInk, S.regionLines];
+    styleBorders();
+    S.borderLayers.forEach((l) => { if (l !== S.regionLines) l.addTo(S.map); });
+    toggleRegions();
+  } catch { /* sin conexión: se queda sin líneas */ }
+}
+// Sobre los colores del modelo, líneas oscuras (como Windy) para no confundirlas con las isobaras blancas;
+// sin colores (radar, satélite) líneas claras sobre el mapa oscuro
+function styleBorders() {
+  if (!S.borderInk) return;
+  const field = !LAYERS[S.layer].kind;
+  const lightBase = ['light', 'osm', 'topo'].includes(settings.mapBase);
+  const dark = field || lightBase;
+  const ink = dark ? '#10161d' : '#ffffff', halo = dark ? '#ffffff' : '#000000';
+  S.borderInk[0].setStyle({ color: ink, weight: 1.5, opacity: dark ? 0.8 : 0.9 });
+  S.borderInk[1].setStyle({ color: ink, weight: 1.4, opacity: dark ? 0.7 : 0.8 });
+  S.borderHalo.forEach((l) => l.setStyle({ color: halo, weight: 3, opacity: dark ? 0.12 : 0.35 }));
+  S.regionLines.setStyle({ color: ink, weight: 0.9, opacity: 0.5 });
+}
+
+// Las provincias solo al acercarse, para no saturar el mapa
+function toggleRegions() {
+  if (!S.regionLines) return;
+  const on = S.map.getZoom() >= 6;
+  if (on && !S.map.hasLayer(S.regionLines)) S.regionLines.addTo(S.map);
+  if (!on && S.map.hasLayer(S.regionLines)) S.map.removeLayer(S.regionLines);
 }
 
 function prepareLayer() {
@@ -267,6 +321,7 @@ function applyLayer() {
   if (!spec.levels) S.level = 'surface';
   showRadarFrame();
   showSat();
+  styleBorders();
   renderChips();
   el('mapSatSel').classList.toggle('hidden', S.layer !== 'sat');
   prepareLayer();
@@ -704,6 +759,7 @@ function buildMenu() {
     <h3>Mapa base</h3>${radio('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}
     <h3>Horizonte</h3>${radio('days', [['2', '2 días'], ['3', '3 días'], ['5', '5 días'], ['7', '7 días'], ['10', '10 días']], String(S.days))}
     <h3>Isolíneas</h3>${radio('iso', ISO_MODES, S.iso)}
+    <h3>Líneas del mapa</h3><label><input type="checkbox" name="borders" ${S.borders ? 'checked' : ''}> Costas, fronteras y provincias</label>
     <h3>Resolución</h3>${radio('grid', [['low', 'Baja (menos datos)'], ['normal', 'Normal'], ['high', 'Alta (más peticiones)']], settings.mapGrid)}
     <p class="tiny" style="margin:8px 0 0">El mapa interpola una rejilla de puntos del modelo. Más resolución u horizonte = más detalle, pero consume más cuota gratuita (10.000 llamadas/día).</p>`;
   m.querySelector('#mapModelSel').append(selectEl(api.MODELS.map((x) => [x.id, x.name]), settings.model, (v) => {
@@ -715,6 +771,7 @@ function buildMenu() {
     if (name === 'grid') { settings.mapGrid = value; saveSettings(); }
     if (name === 'days') { S.days = +value; loadData(true); }
     if (name === 'iso') { S.iso = value; save('map.iso', value); sideState(); prepareLayer(); }
+    if (name === 'borders') { S.borders = e.target.checked; save('map.borders', S.borders); showBorders(); }
   };
 }
 
@@ -738,6 +795,8 @@ export default {
         .setView(view ? [view[0], view[1]] : [state.place.lat, state.place.lon], view ? view[2] : 6);
       S.map = map;
       map.createPane('labelsPane').style.zIndex = 380;
+      map.createPane('bordersPane').style.zIndex = 365;
+      map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
       // La atribución va justo encima del panel inferior, que cambia de altura
       const panel = root.querySelector('.map-panel');
@@ -749,6 +808,8 @@ export default {
       fitAttribution();
       setBase();
       S.field = new FieldLayer(map);
+      showBorders();
+      map.on('zoomend', toggleRegions);
       S.marker = L.marker([state.place.lat, state.place.lon], { icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16, 16] }) }).addTo(map);
       map.on('moveend', loadDebounced);
       map.on('moveend', () => save('map.view', [map.getCenter().lat, map.getCenter().lng, map.getZoom()]));
@@ -769,7 +830,9 @@ export default {
       return;
     }
     // Re-render por cambio de lugar o de ajustes
+    const baseChanged = S.baseKey !== settings.mapBase;
     setBase();
+    if (baseChanged) showBorders();
     S.marker.setLatLng([state.place.lat, state.place.lon]);
     S.map.invalidateSize();
     const ll = L.latLng(state.place.lat, state.place.lon);

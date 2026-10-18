@@ -16,7 +16,10 @@ export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(url);
+      // Si la red se queda colgada (cobertura móvil mala), se corta y se reintenta
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 25000);
+      const res = await fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(timer));
       let data = null;
       try { data = await res.json(); } catch { /* respuesta no JSON */ }
       if (res.status === 429) {
@@ -195,35 +198,48 @@ export async function archive(p, start, end, daily, opts = {}) {
 }
 
 // ---------- Rejilla para el mapa (muchos puntos en una petición) ----------
+// Las horas llegan como números (respuesta más ligera) y se pasan a texto ISO una sola vez
+const isoCache = new Map();
+function gridPoints(d) {
+  const arr = Array.isArray(d) ? d : [d];
+  for (const p of arr) {
+    const h = p.hourly;
+    if (h && typeof h.time?.[0] === 'number') {
+      h.time = h.time.map((t) => {
+        let s = isoCache.get(t);
+        if (!s) { s = new Date(t * 1000).toISOString().slice(0, 16); isoCache.set(t, s); }
+        return s;
+      });
+    }
+  }
+  return arr;
+}
 export async function grid(lats, lons, vars, days, model) {
   const url = build('https://api.open-meteo.com/v1/forecast', {
     latitude: lats.map((v) => v.toFixed(2)),
     longitude: lons.map((v) => v.toFixed(2)),
-    hourly: vars, forecast_days: days, timezone: 'GMT', cell_selection: 'nearest',
+    hourly: vars, forecast_days: days, timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'nearest',
     models: model === 'best_match' ? undefined : model,
   });
-  const d = await getJSON(url, { ttl: 30 * 60e3 });
-  return Array.isArray(d) ? d : [d];
+  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
 }
 
 export async function marineGrid(lats, lons, vars, days) {
   const url = build('https://marine-api.open-meteo.com/v1/marine', {
     latitude: lats.map((v) => v.toFixed(2)),
     longitude: lons.map((v) => v.toFixed(2)),
-    hourly: vars, forecast_days: days, timezone: 'GMT', cell_selection: 'sea', // la costa se recorta en el mapa
+    hourly: vars, forecast_days: days, timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'sea', // la costa se recorta en el mapa
   });
-  const d = await getJSON(url, { ttl: 30 * 60e3 });
-  return Array.isArray(d) ? d : [d];
+  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
 }
 
 export async function airGrid(lats, lons, vars, days) {
   const url = build('https://air-quality-api.open-meteo.com/v1/air-quality', {
     latitude: lats.map((v) => v.toFixed(2)),
     longitude: lons.map((v) => v.toFixed(2)),
-    hourly: vars, forecast_days: Math.min(days, 5), timezone: 'GMT', cell_selection: 'nearest',
+    hourly: vars, forecast_days: Math.min(days, 5), timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'nearest',
   });
-  const d = await getJSON(url, { ttl: 30 * 60e3 });
-  return Array.isArray(d) ? d : [d];
+  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
 }
 
 // ---------- Búsqueda de lugares ----------

@@ -8,6 +8,8 @@ import { gradientCSS, colorAt } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
 import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
+import { getForecast } from '../data.js';
+import { wxIcon } from '../icons.js';
 import * as own from '../owndata.js';
 import { makeThumbs, thumbUrl } from '../thumbs.js';
 
@@ -109,7 +111,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -345,8 +347,8 @@ function currentStyle() {
   if (isoMode === 'temp') style.iso = { var: spec.levels ? LEVELS[S.level].t : 'temperature_2m', step: 5, fmt: (v) => f.temp(v) };
   // Números sobre el mapa
   if (S.values && style.var) style.values = { var: style.var, fmt: UNITS[spec.unit].fmt };
-  // Ciudades con el valor de la capa (en radar/satélite solo el nombre)
-  if (S.cities) style.cities = style.var ? { var: style.var, fmt: UNITS[spec.unit].fmt } : { var: null };
+  // Ciudades con su temperatura, sea cual sea la capa (como en Windy)
+  if (S.cities) style.cities = { var: 'temperature_2m', fmt: (v) => f.temp(v) };
   return style;
 }
 
@@ -707,33 +709,75 @@ function timeLabel() {
   return `${DAYS_ES[d.getDay()]} ${d.getDate()} · ${String(d.getHours()).padStart(2, '0')}:00${rel === 0 ? ' · ahora' : ''}`;
 }
 
+// Con modelo, como en Windy: la marca de la hora queda fija en el centro y se arrastra
+// por debajo una tira de días (cada día, PXH píxeles por hora). Con radar/satélite, deslizador normal.
+const PXH = 160 / 24;
+const stripMode = () => !obs() && !!S.grid;
 function buildDays() {
   const box = el('mapDays');
   if (!box) return;
+  const tl = el('wTl');
   const o = obs();
+  tl.classList.toggle('strip', stripMode());
   if (o) {
     box.innerHTML = `<div class="w-day" style="width:100%"><span>${LAYERS[S.layer].kind === 'sat' ? 'Satélite' : 'Radar'} · últimas 2 horas</span></div>`;
+    el('wStrip').scrollLeft = 0;
     return;
   }
   const g = S.grid;
   if (!g) { box.innerHTML = ''; return; }
-  const groups = [];
-  for (let i = S.t0; i < g.nt; i++) {
-    const d = new Date(g.times[i] + ':00Z');
-    const key = d.toDateString();
-    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, d, n: 0, start: i });
-    groups[groups.length - 1].n++;
+  const half = el('wStrip').clientWidth / 2;
+  const ms0 = timeMs(g, S.t0), ms1 = timeMs(g, g.nt - 1);
+  const blocks = [];
+  for (let a = ms0; a < ms1;) {
+    const d = new Date(a);
+    const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const b = Math.min(next, ms1);
+    blocks.push({ d, w: ((b - a) / 3600e3) * PXH });
+    a = b;
   }
-  // Ancho proporcional a los pasos de datos del día, igual que avanza el deslizador
-  const total = g.nt - S.t0;
-  const px = box.clientWidth || 300;
-  box.innerHTML = groups.map((gr, k) => {
-    const w = (gr.n / total) * 100;
-    const wpx = (w / 100) * px;
-    // Etiqueta según el hueco: "Lunes 19", "lun 19", "19" o nada
-    const label = wpx > 125 ? `${DAYS_LONG[gr.d.getDay()]} ${gr.d.getDate()}` : wpx > 58 ? `${DAYS_ES[gr.d.getDay()]} ${gr.d.getDate()}` : wpx > 22 ? String(gr.d.getDate()) : '';
-    return `<div class="w-day${k === 0 ? ' first' : ''}${wpx < 58 ? ' narrow' : ''}" style="width:${w}%"><span>${label}</span></div>`;
+  if (!blocks.length) blocks.push({ d: new Date(ms0), w: 0 });
+  // Margen de media tira a cada lado para poder llevar cualquier hora al centro
+  blocks[0].w += half;
+  blocks[blocks.length - 1].w += half;
+  box.innerHTML = blocks.map((bl, k) => {
+    const label = bl.w > 125 ? `${DAYS_LONG[bl.d.getDay()]} ${bl.d.getDate()}` : bl.w > 58 ? `${DAYS_ES[bl.d.getDay()]} ${bl.d.getDate()}` : bl.w > 22 ? String(bl.d.getDate()) : '';
+    return `<div class="w-day${k % 2 ? ' alt' : ''}" style="width:${bl.w.toFixed(1)}px"><span>${label}</span></div>`;
   }).join('');
+}
+
+// Instante (ms) que corresponde a la posición de la tira, y al revés
+function stripMs() {
+  const g = S.grid;
+  const ms = timeMs(g, S.t0) + (el('wStrip').scrollLeft / PXH) * 3600e3;
+  return Math.max(timeMs(g, S.t0), Math.min(timeMs(g, g.nt - 1), ms));
+}
+function msToStep(ms) {
+  const g = S.grid;
+  let i = S.t0;
+  while (i + 1 < g.nt && timeMs(g, i + 1) <= ms) i++;
+  const span = i + 1 < g.nt ? timeMs(g, i + 1) - timeMs(g, i) : 1;
+  return [i, i + 1 < g.nt ? Math.max(0, Math.min(1, (ms - timeMs(g, i)) / span)) : 0];
+}
+let snapTimer = null;
+function onStripScroll() {
+  if (!stripMode() || performance.now() < (S.progScroll || 0)) return;
+  stopPlay();
+  const ms = stripMs();
+  const [i, fr] = msToStep(ms);
+  S.t = i; S.tf = fr;
+  ensureOwnStep(i);
+  S.field.setTime(i, fr);
+  el('mapRange').value = i;
+  placeBubble(false);
+  // Al soltar, se ajusta a la hora en punto más cercana
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => {
+    const st = el('wStrip');
+    const hrs = Math.round((stripMs() - timeMs(S.grid, S.t0)) / 3600e3);
+    const x = hrs * PXH;
+    if (Math.abs(st.scrollLeft - x) > 0.5) st.scrollLeft = x; else updatePicker();
+  }, 160);
 }
 
 function updateSlider() {
@@ -759,28 +803,39 @@ function setTime(i, frac = 0) {
 }
 
 // Burbuja naranja con la hora y línea vertical sobre los días, como en Windy
-function placeBubble() {
+function placeBubble(scroll = true) {
   const r = el('mapRange'), b = el('tlBubble'), line = el('tlLine');
   if (!r || !b) return;
   if (r.disabled) { b.classList.add('hidden'); line.classList.add('hidden'); return; }
   b.classList.remove('hidden');
   line.classList.remove('hidden');
-  const min = +r.min, max = +r.max;
-  const pos = max > min ? (+r.value + (S.tf || 0) - min) / (max - min) : 0;
+  const W = el('wTl').clientWidth;
   const o = obs();
   if (o) {
     b.textContent = o.times[o.idx] ? hhmmLocal(o.times[o.idx]) : '';
-  } else if (S.grid) {
-    const g = S.grid, t = Math.min(S.t, g.nt - 1);
-    const ms = timeMs(g, t) + (S.tf && t + 1 < g.nt ? S.tf * (timeMs(g, t + 1) - timeMs(g, t)) : 0);
-    const d = new Date(Math.round(ms / 900e3) * 900e3);
-    b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const min = +r.min, max = +r.max;
+    const x = (max > min ? (+r.value - min) / (max - min) : 0) * W;
+    line.style.left = x + 'px';
+    const half = b.offsetWidth / 2;
+    b.style.left = Math.max(half, Math.min(W - half, x)) + 'px';
+    return;
   }
-  const W = r.clientWidth;
-  const x = pos * W;
-  line.style.left = x + 'px';
-  const half = b.offsetWidth / 2;
-  b.style.left = Math.max(half, Math.min(W - half, x)) + 'px';
+  if (!S.grid) return;
+  const g = S.grid, t = Math.min(S.t, g.nt - 1);
+  const ms = timeMs(g, t) + (S.tf && t + 1 < g.nt ? S.tf * (timeMs(g, t + 1) - timeMs(g, t)) : 0);
+  const d = new Date(Math.round(ms / 900e3) * 900e3);
+  b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  // La marca queda en el centro; se mueve la tira
+  line.style.left = W / 2 + 'px';
+  b.style.left = W / 2 + 'px';
+  if (scroll) {
+    const st = el('wStrip');
+    const x = ((ms - timeMs(g, S.t0)) / 3600e3) * PXH;
+    if (Math.abs(st.scrollLeft - x) > 0.5) {
+      S.progScroll = performance.now() + 120;
+      st.scrollLeft = x;
+    }
+  }
 }
 
 function togglePlay() {
@@ -817,12 +872,60 @@ function updateTopBar() {
   const p = state.place;
   const name = el('wPlaceName');
   if (name) name.textContent = p.name;
+  updateNow();
   const fav = el('wFav');
   if (fav) {
     const on = isFavorite();
     fav.innerHTML = SVG(on ? IC.heart : IC.heartO);
     fav.classList.toggle('on', on);
   }
+}
+
+// Tarjeta bajo el buscador: temperatura actual y 4 días con la silueta de temperaturas (como Windy)
+const DAYS_UP = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
+function updateNow() {
+  const box = el('wNow');
+  if (!box) return;
+  const key = `${state.place.lat},${state.place.lon},${settings.model}`;
+  getForecast().then((d) => {
+    if (key !== `${state.place.lat},${state.place.lon},${settings.model}`) return;
+    const c = d.current, dd = d.daily, h = d.hourly;
+    const today = c.time.slice(0, 10);
+    const ti = Math.max(0, dd.time.indexOf(today));
+    const days = dd.time.slice(ti, ti + 4);
+    if (!days.length) { box.innerHTML = ''; return; }
+    // Silueta y lluvia desde la hora actual hasta el final del cuarto día;
+    // la columna de hoy es más estrecha (solo quedan unas horas), como en Windy
+    const i0 = Math.max(0, h.time.findIndex((t) => t.slice(0, 13) >= c.time.slice(0, 13)));
+    const left = Math.max(1, 24 - +h.time[i0].slice(11, 13));
+    const flex = days.map((_, k) => (k === 0 ? Math.max(0.6, left / 24) : 1));
+    const total = flex.reduce((x, y) => x + y, 0);
+    const W = 400, H = 60;
+    // Posición horizontal (0..W) de la hora i, repartida en las columnas de su día
+    const xOf = (i) => {
+      const k = days.indexOf(h.time[i].slice(0, 10));
+      if (k < 0) return null;
+      const before = flex.slice(0, k).reduce((x, y) => x + y, 0);
+      const frac = k === 0 ? (i - i0) / left : +h.time[i].slice(11, 13) / 24;
+      return ((before + frac * flex[k]) / total) * W;
+    };
+    const idx = [];
+    for (let i = i0; i < h.time.length && days.includes(h.time[i].slice(0, 10)); i++) if (f.isNum(h.temperature_2m[i])) idx.push(i);
+    const temps = idx.map((i) => h.temperature_2m[i]);
+    const lo = Math.min(...temps), hi = Math.max(...temps);
+    const pts = idx.map((i, k) => `${xOf(i).toFixed(1)},${(H - 4 - ((temps[k] - lo) / Math.max(1, hi - lo)) * (H - 22)).toFixed(1)}`);
+    const rain = idx.filter((i) => h.precipitation[i] >= 0.1).map((i) => `<i style="left:${(xOf(i) / W * 100).toFixed(2)}%;width:${(100 / (total * 24)).toFixed(2)}%;opacity:${Math.min(1, 0.4 + h.precipitation[i] / 2).toFixed(2)}"></i>`);
+    box.innerHTML = `
+      <div class="wn-now"><big>${f.isNum(c.temperature_2m) ? Math.round(f.tempVal(c.temperature_2m)) : '–'}<sup>°</sup></big>
+        <small>${wxIcon(c.weather_code, c.is_day, 'wn-ico')} ${f.wind(c.wind_speed_10m, true)}</small></div>
+      <div class="wn-fc">
+        <svg class="wn-mount" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="M0,${H} L${pts.join(' L')} L${W},${H} Z"/></svg>
+        <ul class="wn-days">${days.map((day, k) => `<li style="flex:${flex[k]}"><span>${DAYS_UP[f.parts(day).wd]}</span>
+          ${wxIcon(dd.weather_code[ti + k], 1)}
+          <em>${k === 0 ? '' : `${f.temp(dd.temperature_2m_min[ti + k])} / `}<b>${f.temp(dd.temperature_2m_max[ti + k])}</b></em></li>`).join('')}</ul>
+        <div class="wn-rain">${rain.join('')}</div>
+      </div>`;
+  }).catch(() => { box.innerHTML = ''; });
 }
 
 function pickValue(ll) {
@@ -866,6 +969,7 @@ function updatePicker() {
 function pickAt(latlng) {
   S.pick = latlng;
   el('wSearch').classList.add('hidden');
+  el('wNow').classList.add('hidden');
   el('wPicker').classList.remove('hidden');
   updatePicker();
   S.marker.setLatLng(latlng);
@@ -881,6 +985,7 @@ function closePicker() {
   S.marker.getElement()?.querySelector('.pin-val')?.classList.add('hidden');
   el('wPicker').classList.add('hidden');
   el('wSearch').classList.remove('hidden');
+  el('wNow').classList.remove('hidden');
 }
 function highlightStrip() { /* el panel de horas ahora está en el detalle */ }
 
@@ -992,6 +1097,7 @@ function buildUI(root) {
         <button class="w-sb-ico" id="wGps" title="Mi ubicación">${SVG(IC.gps)}</button>
         <button class="w-sb-ico" id="wFav" title="Favorito"></button>
       </div>
+      <button class="w-now" id="wNow" aria-label="Pronóstico del lugar"></button>
       <div class="w-picker hidden" id="wPicker">
         <div class="wp-row"><div class="wp-label"></div><div class="wp-val"></div></div>
         <div class="wp-actions">
@@ -1015,10 +1121,10 @@ function buildUI(root) {
     <div class="w-bottom" id="wBottom">
       <div class="w-timeline">
         <button class="w-play" id="mapPlay">${ICON.play}</button>
-        <div class="w-tl">
+        <div class="w-tl" id="wTl">
+          <div class="w-strip" id="wStrip"><div class="w-days" id="mapDays"></div></div>
           <span class="w-bubble hidden" id="tlBubble"></span>
           <span class="w-tline hidden" id="tlLine"></span>
-          <div class="w-days" id="mapDays"></div>
           <input type="range" id="mapRange" min="0" max="0" value="0" aria-label="Hora">
         </div>
       </div>
@@ -1041,7 +1147,23 @@ function buildUI(root) {
       closeMenu();
     }
   });
-  window.addEventListener('resize', placeBubble);
+  window.addEventListener('resize', () => { buildDays(); placeBubble(); });
+  // Tira de días: se arrastra con el dedo, con el ratón o con la rueda
+  const strip = el('wStrip');
+  strip.addEventListener('scroll', onStripScroll, { passive: true });
+  strip.addEventListener('wheel', (e) => {
+    if (!stripMode() || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY;
+  }, { passive: false });
+  strip.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || !stripMode()) return;
+    const x0 = e.clientX, s0 = strip.scrollLeft;
+    const move = (ev) => { strip.scrollLeft = s0 - (ev.clientX - x0); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
   el('mapPlay').onclick = togglePlay;
   el('wSearchBtn').onclick = () => el('placeBtn').click();
   el('mapSearch').onclick = () => el('placeBtn').click();
@@ -1050,6 +1172,7 @@ function buildUI(root) {
   el('wpFav').onclick = () => { if (!isFavorite()) toggleFavorite(); toast('Guardado en favoritos'); };
   el('wpDetail').onclick = () => { closePicker(); openDetail(el('view-map')); };
   el('wpClose').onclick = closePicker;
+  el('wNow').onclick = () => openDetail(el('view-map'));
   el('wMenuBtn').onclick = openMenu;
   el('wMenuShade').onclick = closeMenu;
   el('mapParticles').onclick = () => { S.particles = !S.particles; sideState(); prepareLayer(); };
@@ -1184,6 +1307,8 @@ export default {
     if (!S.map) return;
     S.map.invalidateSize();
     S.field.redraw();
+    buildDays();
+    placeBubble();
   },
   hide() {
     stopPlay();

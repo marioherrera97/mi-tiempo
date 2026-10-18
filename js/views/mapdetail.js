@@ -22,6 +22,11 @@ const CMP_MODELS = [
 const CMP_VARS = ['weather_code', 'temperature_2m', 'precipitation', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'cloud_cover', 'is_day'];
 const view = { tab: 'basic', step: 3, cmpMode: 'basic', cmpDays: 5 };
 let sheet = null;
+const BAR_IC = {
+  clock: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7z"/></svg>',
+  eye: '<svg viewBox="0 0 24 24"><path d="M12 5C7 5 2.7 8.1 1 12.5 2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>',
+  layers: '<svg viewBox="0 0 24 24"><path d="M12 18.5l-7.4-5.7L3 14.1l9 7 9-7-1.6-1.3zM12 16l7.4-5.7L21 9l-9-7-9 7 1.6 1.3z"/></svg>',
+};
 const DIAS = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
 
 const cell = (txt, style = '', cls = '') => `<td${cls ? ` class="${cls}"` : ''}${style ? ` style="${style}"` : ''}>${txt}</td>`;
@@ -37,7 +42,7 @@ function hourIdx(times, nowKey, step, maxH) {
   return out;
 }
 
-function headRows(times, idx) {
+function headRows(times, idx, night = null) {
   let days = '';
   let k = 0;
   while (k < idx.length) {
@@ -49,12 +54,12 @@ function headRows(times, idx) {
     k += n;
   }
   const isStart = (j) => j > 0 && times[idx[j]].slice(0, 10) !== times[idx[j - 1]].slice(0, 10);
-  const hours = idx.map((i, j) => `<td class="${isStart(j) ? 'daystart' : ''}">${+times[i].slice(11, 13)}</td>`).join('');
+  const hours = idx.map((i, j) => `<td class="${[isStart(j) ? 'daystart' : '', night?.(i) ? 'night' : ''].join(' ')}">${+times[i].slice(11, 13)}</td>`).join('');
   return { html: `<tr class="r-day"><th class="rowlab"></th>${days}</tr><tr class="r-hour"><th class="rowlab">Horas</th>${hours}</tr>`, isStart };
 }
 
-function rowHtml(label, idx, isStart, fn, nowJ = -1) {
-  const td = (html, j) => html.replace(/^<td( class="([^"]*)")?/, (m, a, c) => `<td class="${[c, isStart(j) ? 'daystart' : '', j === nowJ ? 'nowcol' : ''].filter(Boolean).join(' ')}"`);
+function rowHtml(label, idx, isStart, fn, nowJ = -1, night = null) {
+  const td = (html, j) => html.replace(/^<td( class="([^"]*)")?/, (m, a, c) => `<td class="${[c, isStart(j) ? 'daystart' : '', j === nowJ ? 'nowcol' : '', night?.(idx[j]) ? 'night' : ''].filter(Boolean).join(' ')}"`);
   return `<tr><th class="rowlab">${label}</th>${idx.map((i, j) => td(fn(i), j)).join('')}</tr>`;
 }
 
@@ -82,20 +87,22 @@ function summary(d) {
         <span class="wd-t">${f.temp(dd.temperature_2m_min[ti + k])} / <b>${f.temp(dd.temperature_2m_max[ti + k])}</b></span>
       </div>`).join('')}
     </div>
-    <div class="wd-rainrow" style="--n:${n}"><span class="wd-drops">💧</span><div class="wd-rain">${rain}</div></div>`;
+    <div class="wd-rainrow" style="--n:${n}"><span class="wd-drops">💧</span><div class="wd-rain">${rain}<b class="wd-win"></b></div></div>`;
 }
 
 // ---------- Vistas ----------
 async function basic(body, d) {
   const h = d.hourly;
-  const idx = hourIdx(h.time, d.current.time.slice(0, 13), view.step, view.step === 1 ? 72 : h.time.length);
+  // Como Windy: el día de hoy entero (también las horas pasadas), con la hora actual marcada
   const nowKey = d.current.time.slice(0, 13);
+  const idx = hourIdx(h.time, d.current.time.slice(0, 10) + 'T00', view.step, view.step === 1 ? 96 : h.time.length);
   let nowJ = idx.findIndex((i) => h.time[i].slice(0, 13) >= nowKey);
   if (view.step === 3 && nowJ > 0 && h.time[idx[nowJ]].slice(0, 13) > nowKey) nowJ--;
-  const { html, isStart } = headRows(h.time, idx);
-  const R = (label, fn) => rowHtml(label, idx, isStart, fn, nowJ);
-  body.innerHTML = `<div class="wd-table"><table>${html}
-    <tr class="r-icon"><th class="rowlab"></th>${idx.map((i, j) => `<td class="${[isStart(j) ? 'daystart' : '', j === nowJ ? 'nowcol' : ''].join(' ')}">${wxIcon(h.weather_code[i], h.is_day[i])}</td>`).join('')}</tr>
+  const night = (i) => h.is_day?.[i] === 0;
+  const { html, isStart } = headRows(h.time, idx, night);
+  const R = (label, fn) => rowHtml(label, idx, isStart, fn, nowJ, night);
+  body.innerHTML = `<div class="wd-table"><svg class="wd-curve" aria-hidden="true"></svg><table>${html}
+    <tr class="r-icon"><th class="rowlab"></th>${idx.map((i, j) => `<td class="${[isStart(j) ? 'daystart' : '', j === nowJ ? 'nowcol' : '', night(i) ? 'night' : ''].join(' ')}">${wxIcon(h.weather_code[i], h.is_day[i])}</td>`).join('')}</tr>
     ${R(`Temperatura <small>${f.tempUnit()}</small>`, (i) => cell(f.temp(h.temperature_2m[i]), '', 'big'))}
     ${R(`Sens. térmica <small>${f.tempUnit()}</small>`, (i) => cell(f.temp(h.apparent_temperature[i]), '', 'soft'))}
     ${R(`Lluvia <small>${f.precipUnit()}</small>`, (i) => {
@@ -109,7 +116,29 @@ async function basic(body, d) {
     ${R('Nubes <small>%</small>', (i) => cell(f.isNum(h.cloud_cover[i]) ? Math.round(h.cloud_cover[i]) : '–', '', 'soft'))}
     ${R('Prob. lluvia', (i) => cell(f.isNum(h.precipitation_probability[i]) && h.precipitation_probability[i] >= 5 ? h.precipitation_probability[i] + '%' : '', '', 'rainv'))}
   </table></div>`;
+  drawCurve(body, idx.map((i) => h.temperature_2m[i]));
   scrollToNow(body);
+}
+
+// Silueta rosada de la temperatura por detrás de las horas, iconos y temperaturas (como Windy)
+function drawCurve(body, temps) {
+  const wrap = body.querySelector('.wd-table');
+  const svg = wrap?.querySelector('.wd-curve');
+  const hourCells = wrap?.querySelectorAll('tr.r-hour td');
+  const tempRow = wrap?.querySelector('td.big')?.parentElement;
+  if (!svg || !hourCells?.length || !tempRow) return;
+  const ok = temps.filter(f.isNum);
+  if (!ok.length) return;
+  const lo = Math.min(...ok), hi = Math.max(...ok);
+  const top = hourCells[0].offsetTop, bottom = tempRow.offsetTop + tempRow.offsetHeight;
+  const x0 = hourCells[0].offsetLeft, last = hourCells[hourCells.length - 1];
+  const W = last.offsetLeft + last.offsetWidth - x0, H = bottom - top;
+  const pts = [...hourCells].map((c, j) => (f.isNum(temps[j]) ? [c.offsetLeft - x0 + c.offsetWidth / 2, H - 8 - ((temps[j] - lo) / Math.max(1, hi - lo)) * (H * 0.75)] : null)).filter(Boolean);
+  Object.assign(svg.style, { left: x0 + 'px', top: top + 'px', width: W + 'px', height: H + 'px' });
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L');
+  svg.innerHTML = `<defs><linearGradient id="wdCurveG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f08a7e" stop-opacity=".5"/><stop offset="1" stop-color="#f08a7e" stop-opacity=".06"/></linearGradient></defs>
+    <path d="M0,${H} L0,${pts[0][1].toFixed(1)} L${line} L${W},${pts[pts.length - 1][1].toFixed(1)} L${W},${H} Z" fill="url(#wdCurveG)"/>`;
 }
 
 async function meteo(body, d) {
@@ -291,7 +320,34 @@ function daySummary(h, get, shown, nowKey) {
 function scrollToNow(body) {
   const now = body.querySelector('td.nowcol');
   const wrap = body.querySelector('.wd-table');
-  if (now && wrap) wrap.scrollLeft = Math.max(0, now.offsetLeft - 120);
+  if (!now || !wrap) return;
+  // Se ve el principio del día; solo se desplaza si la hora actual quedaría fuera
+  wrap.scrollLeft = Math.max(0, now.offsetLeft + now.offsetWidth + 4 - wrap.clientWidth);
+}
+
+// Recuadro rojo en la franja de lluvia con el tramo que se ve en la tabla (como Windy)
+function trackWindow() {
+  const wrap = sheet.querySelector('.wd-table');
+  const win = sheet.querySelector('.wd-win');
+  const top = sheet.querySelector('.wd-top');
+  const cells = wrap?.querySelectorAll('tr.r-hour td');
+  const times = sheet.colTimes;
+  if (!wrap || !win || !cells?.length || !times || !sheet.days?.length) { if (win) win.style.display = 'none'; return; }
+  win.style.display = '';
+  const lab = wrap.querySelector('th.rowlab')?.offsetWidth || 0;
+  const a = wrap.scrollLeft + lab, b = wrap.scrollLeft + wrap.clientWidth;
+  let first = -1, lastJ = -1;
+  cells.forEach((c, j) => { if (c.offsetLeft + c.offsetWidth > a + 2 && c.offsetLeft < b - 2) { if (first < 0) first = j; lastJ = j; } });
+  if (first < 0) return;
+  const ms = (t) => Date.parse(t + ':00Z');
+  const t0 = ms(sheet.days[0] + 'T00:00'), span = sheet.days.length * 24 * 3600e3;
+  const step = times[1] ? ms(times[1]) - ms(times[0]) : 3600e3;
+  const l = Math.max(0, (ms(times[first]) - t0) / span), r = Math.min(1, (ms(times[lastJ]) + step - t0) / span);
+  win.style.left = (l * 100).toFixed(2) + '%';
+  win.style.width = (Math.max(0.01, r - l) * 100).toFixed(2) + '%';
+  // Que el recuadro no se salga de la vista de días
+  const x = win.parentElement.offsetLeft + win.offsetLeft, w = win.offsetWidth;
+  if (x < top.scrollLeft || x + w > top.scrollLeft + top.clientWidth) top.scrollLeft = Math.max(0, x - 20);
 }
 
 function goDay(body, day) {
@@ -313,10 +369,25 @@ async function renderAll() {
   try {
     const d = await getForecast();
     top.innerHTML = summary(d);
+    const ti = Math.max(0, d.daily.time.indexOf(d.current.time.slice(0, 10)));
+    sheet.days = d.daily.time.slice(ti, ti + 16);
     sheet.querySelector('.wd-srcwrap').innerHTML = d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : '';
     // Tocar un día lleva la tabla a ese día, como en Windy
     top.querySelectorAll('[data-day]').forEach((el) => { el.onclick = () => goDay(sheet.querySelector('.wd-body'), el.dataset.day); });
     await RENDER[view.tab](body, d);
+    // Fecha y hora de cada columna de la tabla (para el recuadro de la franja de lluvia)
+    const wrap = body.querySelector('.wd-table');
+    const hrs = [...(wrap?.querySelectorAll('tr.r-hour td') || [])].map((c) => +c.textContent);
+    sheet.colTimes = null;
+    if (wrap && hrs.length) {
+      const times = [];
+      wrap.querySelectorAll('tr.r-day td[data-day]').forEach((c) => {
+        for (let k = 0; k < c.colSpan; k++) times.push(`${c.dataset.day}T${String(hrs[times.length]).padStart(2, '0')}:00`);
+      });
+      sheet.colTimes = times;
+      wrap.addEventListener('scroll', trackWindow, { passive: true });
+    }
+    trackWindow();
   } catch (e) {
     body.innerHTML = `<p class="wd-note">${f.esc(e.message)}</p>`;
   }
@@ -334,11 +405,12 @@ export function openDetail(root) {
     <div class="wd-srcwrap"></div>
     <div class="wd-body"></div>
     <div class="wd-bar">
-      <label><span>pronóstico</span><select data-step>${[[1, '1 hora'], [3, '3 horas']].map(([v, l]) => `<option value="${v}" ${v === view.step ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label><span>Mostrar como:</span><select data-view>${VIEWS.map(([v, l]) => `<option value="${v}" ${v === view.tab ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label><span>Fuente:</span><select data-model>${api.MODELS.map((m) => `<option value="${m.id}" ${m.id === settings.model ? 'selected' : ''}>${m.short}</option>`).join('')}</select></label>
+      <label>${BAR_IC.clock}<span>pronóstico</span><select data-step>${[[1, '1 hora'], [3, '3 horas']].map(([v, l]) => `<option value="${v}" ${v === view.step ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>${BAR_IC.eye}<span>Mostrar como:</span><select data-view>${VIEWS.map(([v, l]) => `<option value="${v}" ${v === view.tab ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>${BAR_IC.layers}<span>Fuente:</span><select data-model>${api.MODELS.map((m) => `<option value="${m.id}" ${m.id === settings.model ? 'selected' : ''}>${m.short}</option>`).join('')}</select></label>
     </div>`;
   sheet.classList.add('open');
+  root.classList.add('detail-open');
   sheet.querySelector('[data-close]').onclick = closeDetail;
   sheet.querySelector('[data-step]').onchange = (e) => { view.step = +e.target.value; renderAll(); };
   sheet.querySelector('[data-view]').onchange = (e) => { view.tab = e.target.value; renderAll(); };
@@ -348,5 +420,8 @@ export function openDetail(root) {
   renderAll();
 }
 
-export function closeDetail() { sheet?.classList.remove('open'); }
+export function closeDetail() {
+  sheet?.classList.remove('open');
+  sheet?.parentElement?.classList.remove('detail-open');
+}
 export const detailOpen = () => !!sheet?.classList.contains('open');

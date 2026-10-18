@@ -117,6 +117,7 @@ export class FieldLayer {
     const g = this.grid;
     const a = g?.vars[name];
     if (!a) return null;
+    if (g.wrap) lon = ((((lon - g.lon0) % 360) + 360) % 360) + g.lon0; // rejilla mundial: la longitud da la vuelta
     const v = fn.call(this, a, g, lat, lon, t);
     if (!this.tf || t !== this.t || t + 1 >= g.nt || v === null) return v;
     const w = fn.call(this, a, g, lat, lon, t + 1);

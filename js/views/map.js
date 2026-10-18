@@ -164,17 +164,23 @@ async function ownUsable() {
   if (!imgs) return null;
   const meta = await own.loadMeta();
   if (!meta) return null;
-  const g = meta.grid, c = S.map.getCenter();
+  // Europa con detalle si la vista cabe en ella; si no, la rejilla mundial
+  const g = meta.grid, b = S.map.getBounds();
   const north = g.south + (g.ny - 1) * g.res, east = g.west + (g.nx - 1) * g.res;
-  if (c.lat < g.south || c.lat > north || c.lng < g.west || c.lng > east) return null;
-  return { meta, imgs };
+  const inEu = b.getSouth() >= g.south - 1 && b.getNorth() <= north + 1 && b.getWest() >= g.west - 1 && b.getEast() <= east + 1;
+  if (inEu || !meta.regions?.world) {
+    const c = S.map.getCenter();
+    if (c.lat < g.south || c.lat > north || c.lng < g.west || c.lng > east) return null;
+    return { meta, imgs, region: 'eu' };
+  }
+  return { meta, imgs, region: 'world' };
 }
 
-async function loadOwn({ meta, imgs }) {
-  const gen = `${meta.runId}|${imgs.join('')}`;
-  if (!S.grid?.own || S.grid.run !== meta.runId) {
+async function loadOwn({ meta, imgs, region }) {
+  const gen = `${meta.runId}|${region}|${imgs.join('')}`;
+  if (!S.grid?.own || S.grid.run !== meta.runId || S.grid.region !== region) {
     const prev = currentMs();
-    S.grid = own.createGrid(meta);
+    S.grid = own.createGrid(meta, region);
     S.spec = null;
     const now = Date.now();
     S.t0 = 0;
@@ -199,7 +205,7 @@ async function loadOwn({ meta, imgs }) {
     buildDays();
     placeBubble();
     const run = new Date(meta.run);
-    setStatus(`ECMWF (0,5°) · datos propios · pasada ${run.getUTCDate()}/${run.getUTCMonth() + 1} ${String(run.getUTCHours()).padStart(2, '0')}z UTC`, 'ok');
+    setStatus(`ECMWF (${String(grid.res).replace('.', ',')}°) · datos propios · pasada ${run.getUTCDate()}/${run.getUTCMonth() + 1} ${String(run.getUTCHours()).padStart(2, '0')}z UTC`, 'ok');
   } catch (e) {
     S.ownGen = null;
     setStatus('No se pudieron leer los datos propios: ' + e.message, 'error');

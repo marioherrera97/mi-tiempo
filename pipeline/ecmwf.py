@@ -30,8 +30,12 @@ MIRRORS = [
 ]
 UA = {'User-Agent': 'MiTiempo/1.0 (github.com/marioherrera97/mi-tiempo)'}
 
-# Europa, Atlántico próximo y norte de África cada 0,5°
-WEST, EAST, SOUTH, NORTH, RES = -40.0, 50.0, 20.0, 75.0, 0.5
+# Regiones generadas: Europa con detalle (0,5°) y todo el mundo a 1° para las vistas alejadas.
+# nombre -> (oeste, este, sur, norte, resolución, prefijo de los archivos, ventana de suavizado en puntos de 0,25°)
+REGIONS = {
+    'eu': (-40.0, 50.0, 20.0, 75.0, 0.5, '', 1),
+    'world': (-180.0, 180.0, -80.0, 80.0, 1.0, 'w', 5),
+}
 STEPS = list(range(0, 145, 3)) + list(range(150, 241, 6))  # 0-144 h cada 3 h y hasta 10 días cada 6 h
 
 # nombre -> (param, levtype, nivel, imagen, canal, mínimo, máximo, raíz cuadrada para más precisión en valores bajos)
@@ -102,26 +106,38 @@ def file_url(base, run, step, ext):
     return f'{base}/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-{step}h-oper-fc.{ext}'
 
 
-def region_index(gid):
-    """Índices de la rejilla global que forman la región (filas de norte a sur)."""
-    ni, nj = eccodes.codes_get(gid, 'Ni'), eccodes.codes_get(gid, 'Nj')
-    lat0 = eccodes.codes_get(gid, 'latitudeOfFirstGridPointInDegrees')
-    lon0 = eccodes.codes_get(gid, 'longitudeOfFirstGridPointInDegrees')
-    dx = eccodes.codes_get(gid, 'iDirectionIncrementInDegrees')
-    dy = eccodes.codes_get(gid, 'jDirectionIncrementInDegrees')
-    lats = np.arange(NORTH, SOUTH - 1e-6, -RES)
-    lons = np.arange(WEST, EAST + 1e-6, RES)
-    jj = np.rint((lat0 - lats) / dy).astype(int)
-    ii = np.rint(((lons - lon0) % 360) / dx).astype(int) % ni
-    return ni, nj, jj, ii
+def box_mean(vals, k):
+    """Media en una ventana k x k (la longitud da la vuelta al mundo) para que la rejilla gruesa no pierda información."""
+    if k <= 1:
+        return vals
+    r = k // 2
+    a = np.pad(vals, ((r, r), (0, 0)), mode='edge')
+    a = np.pad(a, ((0, 0), (r, r)), mode='wrap')
+    c = np.vstack([np.zeros((1, a.shape[1])), a.cumsum(0)])
+    a = (c[k:] - c[:-k]) / k
+    c = np.hstack([np.zeros((a.shape[0], 1)), a.cumsum(1)])
+    return (c[:, k:] - c[:, :-k]) / k
 
 
 def decode(msg):
+    """Devuelve el campo recortado para cada región (filas de norte a sur)."""
     gid = eccodes.codes_new_from_message(msg)
     try:
-        ni, nj, jj, ii = region_index(gid)
+        ni, nj = eccodes.codes_get(gid, 'Ni'), eccodes.codes_get(gid, 'Nj')
+        lat0 = eccodes.codes_get(gid, 'latitudeOfFirstGridPointInDegrees')
+        lon0 = eccodes.codes_get(gid, 'longitudeOfFirstGridPointInDegrees')
+        dx = eccodes.codes_get(gid, 'iDirectionIncrementInDegrees')
+        dy = eccodes.codes_get(gid, 'jDirectionIncrementInDegrees')
         vals = eccodes.codes_get_values(gid).reshape(nj, ni)
-        return vals[np.ix_(jj, ii)].astype(np.float32)
+        out = {}
+        for name, (west, east, south, north, res, _prefix, smooth) in REGIONS.items():
+            src = box_mean(vals, smooth)
+            lats = np.arange(north, south - 1e-6, -res)
+            lons = np.arange(west, east + 1e-6, res)
+            jj = np.rint((lat0 - lats) / dy).astype(int)
+            ii = np.rint(((lons - lon0) % 360) / dx).astype(int) % ni
+            out[name] = src[np.ix_(jj, ii)].astype(np.float32)
+        return out
     finally:
         eccodes.codes_release(gid)
 
@@ -169,6 +185,11 @@ def quantize(name, a):
     return np.rint(x * 255).astype(np.uint8)
 
 
+def region_grid(region, shape):
+    west, east, south, north, res, prefix, _smooth = REGIONS[region]
+    return {'west': west, 'south': south, 'east': east, 'north': north, 'res': res, 'nx': shape[1], 'ny': shape[0], 'prefix': prefix}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
@@ -183,7 +204,8 @@ def main():
     meta_path = out / 'meta.json'
     if meta_path.exists():
         old = json.loads(meta_path.read_text(encoding='utf8'))
-        if old.get('runId') == run_id and len(old.get('steps', [])) >= len(steps) and (out / run_id).exists():
+        if old.get('runId') == run_id and len(old.get('steps', [])) >= len(steps) and (out / run_id).exists() \
+                and set(old.get('regions', {})) >= set(REGIONS):
             print(f'La pasada {run_id} ya está generada; nada que hacer.')
             return
     print(f'Pasada ECMWF {run:%Y-%m-%d %H}z desde {base} ({len(steps)} horas)')
@@ -199,44 +221,52 @@ def main():
     tmp_dir = out / (run_id + '.tmp')
     shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir()
-    prev_tp, prev_step = None, None
-    shape = next(iter(fields[steps[0]].values())).shape
-    for k, step in enumerate(steps):
-        f = fields[step]
-        planes = {}
-        for name, (param, levtype, level, *_rest) in VARS.items():
-            a = f.get((param, levtype, level))
-            if name == 'tp':
-                acc = a if a is not None else np.zeros(shape, np.float32)
-                # tp viene acumulada desde el inicio (m): se pasa a mm/h medios del intervalo
-                rate = np.zeros(shape, np.float32) if prev_tp is None else np.maximum(acc - prev_tp, 0) * 1000 / (step - prev_step)
-                prev_tp, prev_step = acc, step
-                a = rate
-            elif a is None:
-                # p. ej. rachas en la hora 0: se toma la siguiente hora disponible
-                nxt = next((fields[s].get((param, levtype, level)) for s in steps[k + 1:] if fields[s].get((param, levtype, level)) is not None), None)
-                a = nxt if nxt is not None else np.zeros(shape, np.float32)
-            else:
-                a = to_units(name, a)
-            planes[name] = quantize(name, a)
-        for img in IMAGES:
-            chans = [None, None, None]
-            for name, v in VARS.items():
-                if v[3] == img:
-                    chans[v[4]] = planes[name]
-            rgb = np.dstack([c if c is not None else np.zeros(shape, np.uint8) for c in chans])
-            Image.fromarray(rgb, 'RGB').save(tmp_dir / f'{img}{step:03d}.png', optimize=True)
+    shapes = {}
+    for region, (*_box, prefix, _smooth) in REGIONS.items():
+        prev_tp, prev_step = None, None
+        shape = shapes[region] = next(iter(fields[steps[0]].values()))[region].shape
+
+        def field(s, key, region=region):
+            v = fields[s].get(key)
+            return None if v is None else v[region]
+
+        for k, step in enumerate(steps):
+            planes = {}
+            for name, (param, levtype, level, *_rest) in VARS.items():
+                key = (param, levtype, level)
+                a = field(step, key)
+                if name == 'tp':
+                    acc = a if a is not None else np.zeros(shape, np.float32)
+                    # tp viene acumulada desde el inicio (m): se pasa a mm/h medios del intervalo
+                    rate = np.zeros(shape, np.float32) if prev_tp is None else np.maximum(acc - prev_tp, 0) * 1000 / (step - prev_step)
+                    prev_tp, prev_step = acc, step
+                    a = rate
+                elif a is None:
+                    # p. ej. rachas en la hora 0: se toma la siguiente hora disponible
+                    nxt = next((field(s, key) for s in steps[k + 1:] if field(s, key) is not None), None)
+                    a = nxt if nxt is not None else np.zeros(shape, np.float32)
+                else:
+                    a = to_units(name, a)
+                planes[name] = quantize(name, a)
+            for img in IMAGES:
+                chans = [None, None, None]
+                for name, v in VARS.items():
+                    if v[3] == img:
+                        chans[v[4]] = planes[name]
+                rgb = np.dstack([c if c is not None else np.zeros(shape, np.uint8) for c in chans])
+                Image.fromarray(rgb, 'RGB').save(tmp_dir / f'{prefix}{img}{step:03d}.png', optimize=True)
 
     shutil.rmtree(run_dir, ignore_errors=True)
     tmp_dir.rename(run_dir)
     meta = {
-        'source': 'ECMWF IFS 0.25° open data (CC BY 4.0), recortado a 0.5°',
+        'source': 'ECMWF IFS 0.25° open data (CC BY 4.0): Europa a 0.5° y mundo a 1°',
         'runId': run_id,
         'run': run.strftime('%Y-%m-%dT%H:%MZ'),
         'generated': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%MZ'),
         'steps': steps,
         'times': [(run + dt.timedelta(hours=s)).strftime('%Y-%m-%dT%H:%M') for s in steps],
-        'grid': {'west': WEST, 'south': SOUTH, 'res': RES, 'nx': shape[1], 'ny': shape[0]},
+        'grid': region_grid('eu', shapes['eu']),
+        'regions': {r: region_grid(r, shapes[r]) for r in REGIONS},
         'images': IMAGES,
         'vars': {n: {'img': v[3], 'ch': v[4], 'min': v[5], 'max': v[6], 'sqrt': v[7]} for n, v in VARS.items()},
     }

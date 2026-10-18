@@ -34,10 +34,13 @@ export function imagesFor(layer, level) {
   return s ? [...new Set(['a', 'b', ...s])] : null;
 }
 
-export function createGrid(meta) {
-  const g = meta.grid;
+// Región de los datos: 'eu' (Europa, 0,5°) o 'world' (todo el mundo, 1°)
+export const regionGrid = (meta, region) => (region === 'eu' ? meta.grid : meta.regions?.[region]);
+
+export function createGrid(meta, region = 'eu') {
+  const g = regionGrid(meta, region);
   return {
-    own: true, run: meta.runId, meta,
+    own: true, run: meta.runId, meta, region, prefix: g.prefix || '', wrap: region === 'world', res: g.res,
     lat0: g.south, lon0: g.west, dlat: g.res, dlon: g.res, nx: g.nx, ny: g.ny,
     nt: meta.times.length, times: meta.times, vars: {}, groups: new Set(['own']), loaded: {},
   };
@@ -71,12 +74,12 @@ const CHANNELS = {
 // Descarga y decodifica una imagen de una hora; devuelve true si se ha cargado algo nuevo
 export function loadStep(grid, t, img) {
   if (isLoaded(grid, img, t)) return Promise.resolve(false);
-  const key = `${grid.run}|${img}|${t}`;
+  const key = `${grid.run}|${grid.prefix}${img}|${t}`;
   if (pending.has(key)) return pending.get(key);
   const p = (async () => {
     const { nx, ny, meta } = grid;
     const n = nx * ny;
-    const url = `${BASE}${meta.runId}/${img}${String(meta.steps[t]).padStart(3, '0')}.png`;
+    const url = `${BASE}${meta.runId}/${grid.prefix}${img}${String(meta.steps[t]).padStart(3, '0')}.png`;
     const px = await readPixels(url, nx, ny);
     const dec = CHANNELS[img].map((name) => {
       const v = meta.vars[name];

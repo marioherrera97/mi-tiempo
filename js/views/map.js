@@ -1,14 +1,12 @@
 // Vista "Mapa" (pantalla principal, al estilo Windy): capas de modelo con partículas animadas,
 // altitudes, isobaras, valores sobre el mapa, radar, satélite y pronóstico del punto seleccionado.
 /* global L */
-import { state, settings, saveSettings, setPlace, load, save, on } from '../state.js';
-import { getForecast } from '../data.js';
-import { wxIcon, wxDesc } from '../icons.js';
+import { state, settings, saveSettings, setPlace, load, save, on, isFavorite, toggleFavorite } from '../state.js';
 import * as api from '../api.js';
 import * as f from '../format.js';
-import { gradientCSS } from '../colors.js';
+import { gradientCSS, colorAt } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
-import { toast, debounce, selectEl } from '../ui.js';
+import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
 
 // ---------- Altitudes ----------
@@ -91,7 +89,6 @@ const LAYERS = {
   radarsat: { label: 'Radar + satélite', cat: 'Observación', kind: 'radar', sat: true },
   sat: { label: 'Satélite', cat: 'Observación', kind: 'sat' },
 };
-const QUICK = ['wind', 'rain', 'temp', 'clouds', 'radar', 'sat', 'waves', 'pressure'];
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
 const BASES = {
@@ -124,7 +121,6 @@ const ICON = {
 };
 const el = (id) => document.getElementById(id);
 const clampInt = (v, a, b) => Math.max(a, Math.min(b, v));
-function setStatus(msg) { const s = el('mapStatusTxt'); if (s) s.textContent = msg; }
 
 // ---------- Rejilla ----------
 function gridDims(size) {
@@ -179,7 +175,7 @@ async function loadData(force = false) {
   // El grupo de superficie define los tiempos: siempre va primero
   if (!S.grid && !missing.includes('surface')) missing.unshift('surface');
   S.loading++;
-  setStatus(`Descargando ${spec.nx * spec.ny} puntos…`);
+  setStatus('Descargando datos del modelo…');
   try {
     for (const name of missing.sort((a, b) => (a === 'surface' ? -1 : b === 'surface' ? 1 : 0))) {
       const pts = await fetchGroup(name, spec);
@@ -201,9 +197,9 @@ async function loadData(force = false) {
     prepareLayer();
     buildDays();
     placeBubble();
-    setStatus(`${api.MODELS.find((m) => m.id === settings.model)?.short || settings.model} · ${spec.nx}×${spec.ny} puntos`);
+    setStatus(`${api.modelName(settings.model)} · rejilla ${spec.nx}×${spec.ny} puntos`, 'ok');
   } catch (e) {
-    setStatus(e.message);
+    setStatus(e.message, 'error');
     if (e.rate && /minuto/.test(e.message) && !S.retryTimer) {
       S.retryTimer = setTimeout(() => { S.retryTimer = null; loadData(); }, 65000);
       toast(e.message + ' Reintento automático en 1 minuto.', 5000);
@@ -339,7 +335,7 @@ function prepareLayer() {
   S.field.setStyle(currentStyle());
   updateLegend();
   updateSlider();
-  refreshPick();
+  updatePicker();
 }
 
 function applyLayer() {
@@ -349,8 +345,7 @@ function applyLayer() {
   showRadarFrame();
   showSat();
   styleBorders();
-  renderChips();
-  el('mapSatSel').classList.toggle('hidden', S.layer !== 'sat');
+  buildMenu();
   prepareLayer();
   loadData();
 }
@@ -368,7 +363,7 @@ async function loadRadar() {
     showRadarFrame();
     updateSlider();
   } catch (e) {
-    setStatus('Radar no disponible: ' + e.message);
+    setStatus('Radar no disponible: ' + e.message, 'error');
   }
 }
 function showRadarFrame() {
@@ -427,10 +422,68 @@ function obs() {
 }
 const hhmmLocal = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
-// ---------- Leyenda (toca la unidad para cambiarla, como en Windy) ----------
+// ---------- Iconos y miniaturas de capas (menú estilo Windy) ----------
+const SVG = (p, cls = '') => `<svg viewBox="0 0 24 24"${cls ? ` class="${cls}"` : ''}>${p}</svg>`;
+const IC = {
+  wind: '<path d="M3 8h10.5A2.5 2.5 0 1 0 11 5.5h-2A4.5 4.5 0 1 1 13.5 10H3zm0 4h15.5a3.5 3.5 0 1 1-3.5 3.5h2a1.5 1.5 0 1 0 1.5-1.5H3zm0-8h4v2H3z"/>',
+  drop: '<path d="M12 2.5C8.5 7 6 10.3 6 13.5a6 6 0 0 0 12 0c0-3.2-2.5-6.5-6-11z"/>',
+  snow: '<path d="M11 2h2v4.6l3.2-1.9 1 1.7L14 8.3V11h2.7l1.9-3.2 1.7 1-1.9 3.2H22v2h-4.6l1.9 3.2-1.7 1-1.9-3.2H13v2.7l3.2 1.9-1 1.7L13 17.4V22h-2v-4.6l-3.2 1.9-1-1.7 3.2-1.9V13H7.3l-1.9 3.2-1.7-1 1.9-3.2H2v-2h4.6L4.7 7.8l1.7-1L8.3 11H11V8.3L7.8 6.4l1-1.7L11 6.6z"/>',
+  bolt: '<path d="M13 2L4 14h7l-2 8 9-12h-7z"/>',
+  temp: '<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0zM12 20a2 2 0 0 1-1-3.7V9h2v7.3a2 2 0 0 1-1 3.7z"/>',
+  sun: '<circle cx="12" cy="12" r="5"/><path d="M11 1h2v3h-2zm0 19h2v3h-2zM1 11h3v2H1zm19 0h3v2h-3zM4.2 5.6l1.4-1.4 2.1 2.1-1.4 1.4zm12.1 12.1 1.4-1.4 2.1 2.1-1.4 1.4zM4.2 18.4l2.1-2.1 1.4 1.4-2.1 2.1zM16.3 6.3l2.1-2.1 1.4 1.4-2.1 2.1z"/>',
+  cloud: '<path d="M6.8 18.5h10.4a4.3 4.3 0 0 0 .5-8.6A6 6 0 0 0 6.2 11a3.8 3.8 0 0 0 .6 7.5z"/>',
+  eye: '<path d="M12 5C6 5 2 12 2 12s4 7 10 7 10-7 10-7-4-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
+  gauge: '<path d="M12 4a10 10 0 0 0-10 10h3a7 7 0 0 1 14 0h3A10 10 0 0 0 12 4zm1 10.7L16.5 8 11 13.3a1.5 1.5 0 1 0 2 1.4z"/>',
+  wave: '<path d="M2 15c2 0 2-1.6 4-1.6S8 15 10 15s2-1.6 4-1.6 2 1.6 4 1.6 2-1.6 4-1.6v2.2c-2 0-2 1.6-4 1.6s-2-1.6-4-1.6-2 1.6-4 1.6-2-1.6-4-1.6-2 1.6-4 1.6zm0-6c2 0 2-1.6 4-1.6S8 9 10 9s2-1.6 4-1.6S16 9 18 9s2-1.6 4-1.6v2.2c-2 0-2 1.6-4 1.6s-2-1.6-4-1.6-2 1.6-4 1.6-2-1.6-4-1.6-2 1.6-4 1.6z"/>',
+  leaf: '<path d="M20 3S9 3 5.5 9.5C3 14 5 19 5 19l1.5-1.3C8 12 13 9 13 9s-4 4-5.5 10.5C15 21 21 15 20 3z"/>',
+  radar: '<path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8zm0 4a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4zm0 4a2 2 0 1 0 2 2l7-7-1.4-1.4-7 7A2 2 0 0 0 12 10z"/>',
+  sat: '<path d="M7.5 3.5 4.7 6.3l2.8 2.8L5.6 11 2.8 8.2 0 11l6.4 6.4 2.8-2.8-2.8-2.8 1.9-1.9 2.8 2.8 2.8-2.8zM14.5 13l-1.4 1.4a4 4 0 0 1 0 5.6l1.4 1.4a6 6 0 0 0 0-8.4zm2.8-2.8-1.4 1.4a8 8 0 0 1 0 11.3l1.4 1.4a10 10 0 0 0 0-14.1z"/>',
+  search: '<path d="M10 3a7 7 0 1 0 4.2 12.6l5.1 5.1 1.4-1.4-5.1-5.1A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/>',
+  gps: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/>',
+  heart: '<path d="M12 20.3l-1.4-1.3C5.4 14.4 2 11.3 2 7.5A4.6 4.6 0 0 1 6.6 3 5 5 0 0 1 12 5.6 5 5 0 0 1 17.4 3 4.6 4.6 0 0 1 22 7.5c0 3.8-3.4 6.9-8.6 11.5z"/>',
+  heartO: '<path d="M16.5 3A5.5 5.5 0 0 0 12 5.1 5.5 5.5 0 0 0 7.5 3 4.6 4.6 0 0 0 2 7.6c0 3.8 3.4 6.9 8.6 11.5L12 20.3l1.4-1.3C18.6 14.4 22 11.4 22 7.6A4.6 4.6 0 0 0 16.5 3zm-4.4 14.6-.1.1-.1-.1C7.1 13.3 4 10.5 4 7.6A2.6 2.6 0 0 1 6.6 5c1.5 0 3 1 3.6 2.3h3.6A4.1 4.1 0 0 1 17.4 5 2.6 2.6 0 0 1 20 7.6c0 2.9-3.1 5.7-7.9 10z"/>',
+  home: '<path d="M12 3 2 12h3v8h5v-6h4v6h5v-8h3z"/>',
+  menu: '<path d="M3 6h18v2.4H3zm0 4.8h18v2.4H3zm0 4.8h18V18H3z"/>',
+  close: '<path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/>',
+  target: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21z"/>',
+  iso: '<path d="M12 4C7 4 3 7.6 3 12s4 8 9 8 9-3.6 9-8-4-8-9-8zm0 14c-3.9 0-7-2.7-7-6s3.1-6 7-6 7 2.7 7 6-3.1 6-7 6zm0-10c-2.2 0-4 1.8-4 4s1.8 4 4 4 4-1.8 4-4-1.8-4-4-4zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>',
+  num: '<text x="12" y="16.5" text-anchor="middle" font-size="10.5" font-weight="800" font-family="Roboto,system-ui,sans-serif">123</text>',
+  clock: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7z"/>',
+  trend: '<path d="M3 17l6-6 4 4 8-8v4h2V3h-8v2h4l-6 6-4-4-7.4 7.4z"/>',
+  gear: '<path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7 7 0 0 0-1.7-1L15 3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.5L6.5 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 0 0 1.7 1L11 21h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/>',
+  grid: '<path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/>',
+};
+const LAYER_ICON = {
+  wind: 'wind', gust: 'wind', rain: 'drop', rainacc: 'drop', snowacc: 'snow', snowdepth: 'snow', cape: 'bolt',
+  temp: 'temp', feels: 'temp', uv: 'sun', dew: 'temp', freezing: 'snow', humidity: 'drop',
+  clouds: 'cloud', lowclouds: 'cloud', midclouds: 'cloud', highclouds: 'cloud', visibility: 'eye', pressure: 'gauge',
+  waves: 'wave', swell: 'wave', windwaves: 'wave', waveperiod: 'wave', sst: 'temp', currents: 'wave',
+  aqi: 'leaf', pm25: 'leaf', dust: 'leaf', radar: 'radar', radarsat: 'radar', sat: 'sat',
+};
+const CATS = ['Todo', 'Viento', 'Temperatura', 'Lluvia y nieve', 'Nubes', 'Presión', 'Mar', 'Aire', 'Observación'];
+const DAYS_LONG = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+// Miniatura de la capa: degradado con sus propios colores y un icono, como las del menú de Windy
+function thumb(k) {
+  const spec = LAYERS[k];
+  let bg;
+  if (spec.kind === 'radar') bg = 'radial-gradient(circle at 38% 42%, #ffe14d 0 7%, #ff8a2b 12%, #2f8fff 22%, #1d4f86 38%, #2a333e 62%)';
+  else if (spec.kind === 'sat') bg = 'linear-gradient(135deg,#eef1f4,#8b949e 40%,#3a424b 75%,#20262d)';
+  else {
+    const [min, max] = spec.range('surface');
+    const c = (p) => {
+      const [r, g, b, a] = colorAt(spec.scale, min + (max - min) * p);
+      return `rgba(${r | 0},${g | 0},${b | 0},${Math.max(a, 0.6).toFixed(2)})`;
+    };
+    bg = `linear-gradient(135deg, ${c(0.1)}, ${c(0.32)} 35%, ${c(0.58)} 65%, ${c(0.9)}), #2b3440`;
+  }
+  return `<span class="w-thumb" style="background:${bg}">${SVG(IC[LAYER_ICON[k]] || IC.wind)}</span>`;
+}
+
+// ---------- Leyenda a todo lo ancho (toca la unidad para cambiarla, como en Windy) ----------
 function niceTicks(min, max) {
   const span = max - min;
-  const raw = span / 5;
+  const raw = span / 6;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
   const out = [];
@@ -441,21 +494,24 @@ function updateLegend() {
   const spec = LAYERS[S.layer];
   const box = el('mapLegend');
   if (spec.kind === 'radar') {
-    box.innerHTML = `<span>Débil</span><div class="bar" style="flex:1;background:linear-gradient(90deg,#88ddee,#0099cc,#0077aa,#ffee00,#ff9900,#ff4400,#c10000,#ff00ff)"></div><span>Intensa</span>`;
+    box.innerHTML = `<span class="w-unit">mm/h</span><div class="w-lbar" style="background:linear-gradient(90deg,#88ddee,#0099cc,#0077aa,#ffee00,#ff9900,#ff4400,#c10000,#ff00ff)">
+      <span style="left:8%">débil</span><span style="left:50%">moderada</span><span style="left:92%">intensa</span></div>`;
     return;
   }
-  if (spec.kind === 'sat') { box.innerHTML = ''; return; }
+  if (spec.kind === 'sat') {
+    box.innerHTML = `<span class="w-unit">IR</span><div class="w-lbar" style="background:linear-gradient(90deg,#20262d,#6d7680,#f2f4f6)">
+      <span style="left:50%">${S.sat === 'modis' ? 'NASA MODIS (imagen de ayer)' : 'Meteosat · nubes altas en blanco'}</span></div>`;
+    return;
+  }
   const [min, max] = spec.range(S.level);
   const U = UNITS[spec.unit];
-  const ticks = niceTicks(min, max);
-  box.innerHTML = `<div style="flex:1;position:relative"><div class="bar" style="background:${gradientCSS(spec.scale, min, max)}"></div>
-    <div class="ticks">${ticks.map((t) => `<span style="left:${((t - min) / (max - min)) * 100}%">${U.fmt(t) || '0'}</span>`).join('')}</div></div>
-    <button class="unit-btn" id="unitBtn" ${U.next ? '' : 'disabled'}>${U.label()}</button>`;
-  const ub = el('unitBtn');
-  if (U.next) ub.onclick = () => { U.next(); toast('Unidad: ' + U.label()); };
+  const ticks = niceTicks(min, max).filter((t, i, a) => a.length < 9 || i % 2 === 0);
+  box.innerHTML = `<button class="w-unit" id="unitBtn">${U.label()}</button>
+    <div class="w-lbar" style="background:${gradientCSS(spec.scale, min, max)}">${ticks.map((t) => `<span style="left:${(4 + ((t - min) / (max - min)) * 92).toFixed(1)}%">${U.fmt(t) || '0'}</span>`).join('')}</div>`;
+  if (U.next) el('unitBtn').onclick = () => { U.next(); toast('Unidad: ' + U.label()); };
 }
 
-// ---------- Línea de tiempo ----------
+// ---------- Línea de tiempo (barra oscura con los días y burbuja naranja) ----------
 const DAYS_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 function timeLabel() {
   const spec = LAYERS[S.layer];
@@ -476,77 +532,73 @@ function timeLabel() {
 
 function buildDays() {
   const box = el('mapDays');
+  if (!box) return;
+  const o = obs();
+  if (o) {
+    box.innerHTML = `<div class="w-day" style="width:100%"><span>${LAYERS[S.layer].kind === 'sat' ? 'Satélite' : 'Radar'} · últimas 2 horas</span></div>`;
+    return;
+  }
   const g = S.grid;
-  if (!box || !g) return;
+  if (!g) { box.innerHTML = ''; return; }
   const groups = [];
   for (let i = S.t0; i < g.nt; i++) {
     const d = new Date(g.times[i] + ':00Z');
     const key = d.toDateString();
-    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, d, start: i, n: 0 });
+    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, d, n: 0 });
     groups[groups.length - 1].n++;
   }
   const total = g.nt - S.t0;
-  box.innerHTML = groups.map((gr) => `<button data-i="${gr.start}" data-n="${gr.n}" style="width:${(gr.n / total) * 100}%">${gr.n >= 6 ? `${DAYS_ES[gr.d.getDay()]} ${gr.d.getDate()}` : ''}</button>`).join('');
-  box.querySelectorAll('button').forEach((b) => {
-    b.onclick = () => {
-      // Al tocar un día se va a su mediodía (o a ahora si es hoy)
-      const start = +b.dataset.i, n = +b.dataset.n;
-      let target = start;
-      for (let i = start; i < start + n; i++) if (new Date(S.grid.times[i] + ':00Z').getHours() === 12) target = i;
-      if (start === S.t0) target = S.t0;
-      setTime(target);
-    };
-  });
+  box.innerHTML = groups.map((gr, k) => {
+    const w = (gr.n / total) * 100;
+    const label = w > 24 ? `${DAYS_LONG[gr.d.getDay()]} ${gr.d.getDate()}` : w > 9 ? `${DAYS_ES[gr.d.getDay()]} ${gr.d.getDate()}` : '';
+    return `<div class="w-day${k === 0 ? ' first' : ''}" style="width:${w}%"><span>${label}</span></div>`;
+  }).join('');
 }
 
 function updateSlider() {
   const r = el('mapRange');
   if (!r) return;
-  const spec = LAYERS[S.layer];
-  el('mapDays').classList.toggle('hidden', !!spec.kind);
   const o = obs();
   if (o) {
     r.min = 0; r.max = Math.max(0, o.times.length - 1); r.value = o.idx; r.disabled = o.times.length < 2;
   } else if (S.grid) {
     r.disabled = false; r.min = S.t0; r.max = S.grid.nt - 1; r.value = S.t;
   }
-  el('mapTime').textContent = timeLabel();
+  buildDays();
   placeBubble();
-  highlightStrip();
+  updatePicker();
 }
 
 function setTime(i, frac = 0) {
   const o = obs();
-  if (o) o.set(i); else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) refreshPick(); }
+  if (o) o.set(i); else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) updatePicker(); }
   const r = el('mapRange');
   if (r) r.value = i;
-  el('mapTime').textContent = timeLabel();
   placeBubble();
-  if (!frac) highlightStrip();
 }
 
-// Burbuja con la hora encima del deslizador, como en Windy
+// Burbuja naranja con la hora y línea vertical sobre los días, como en Windy
 function placeBubble() {
-  const r = el('mapRange'), b = el('tlBubble');
+  const r = el('mapRange'), b = el('tlBubble'), line = el('tlLine');
   if (!r || !b) return;
-  const spec = LAYERS[S.layer];
-  if (r.disabled) { b.classList.add('hidden'); return; }
+  if (r.disabled) { b.classList.add('hidden'); line.classList.add('hidden'); return; }
   b.classList.remove('hidden');
+  line.classList.remove('hidden');
   const min = +r.min, max = +r.max;
   const pos = max > min ? (+r.value + (S.tf || 0) - min) / (max - min) : 0;
-  const w = r.clientWidth - 16;
-  b.dataset.pos = pos;
   const o = obs();
   if (o) {
     b.textContent = o.times[o.idx] ? hhmmLocal(o.times[o.idx]) : '';
   } else if (S.grid) {
     const d = new Date(S.grid.times[S.t] + ':00Z');
     const mins = Math.round((S.tf || 0) * 60);
-    b.textContent = `${DAYS_ES[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
   }
-  // Sin salirse por los lados
+  const W = r.clientWidth;
+  const x = pos * W;
+  line.style.left = x + 'px';
   const half = b.offsetWidth / 2;
-  b.style.left = Math.max(half, Math.min(r.clientWidth - half, 8 + pos * w)) + 'px';
+  b.style.left = Math.max(half, Math.min(W - half, x)) + 'px';
 }
 
 function togglePlay() {
@@ -578,168 +630,156 @@ function togglePlay() {
 }
 function stopPlay() { if (S.playing) togglePlay(); }
 
-// ---------- Picker: valores del punto tocado, se actualiza al mover el tiempo ----------
-function pickHtml(latlng) {
-  const spec = LAYERS[S.layer];
-  const s = (n) => S.field.sample(n, latlng.lat, latlng.lng);
-  let main = '';
-  if (!spec.kind) {
-    const [, v] = spec.src(S.level);
-    const val = s(v);
-    const U = UNITS[spec.unit];
-    let dir = '';
-    if (spec.flow || S.layer === 'wind' || S.layer === 'gust') {
-      const fk = spec.flow ? 'f_' + spec.flow : spec.levels ? 'f_' + S.level : 'f_surface';
-      const u = s(fk + '_u'), w = s(fk + '_v');
-      if (u !== null && w !== null) dir = f.arrow(spec.flow === 'currents' ? (Math.atan2(u, w) * 180 / Math.PI + 360) % 360 + 180 : (Math.atan2(-u, -w) * 180 / Math.PI + 360) % 360);
-    }
-    main = `<div class="pick-main">${dir}<b>${val === null ? '–' : (U.fmt(val) || '0')}</b> <span>${U.label()}</span></div>
-      <div class="tiny">${spec.label}${spec.levels && S.level !== 'surface' ? ' · ' + LEVELS[S.level].label : ''}</div>`;
+// ---------- Barra superior: búsqueda o valores del punto tocado (picker de Windy) ----------
+function updateTopBar() {
+  const p = state.place;
+  const name = el('wPlaceName');
+  if (name) name.textContent = p.name;
+  const fav = el('wFav');
+  if (fav) {
+    const on = isFavorite();
+    fav.innerHTML = SVG(on ? IC.heart : IC.heartO);
+    fav.classList.toggle('on', on);
   }
-  const u = s('f_surface_u'), w = s('f_surface_v');
-  const dir = u !== null ? (Math.atan2(-u, -w) * 180 / Math.PI + 360) % 360 : null;
-  return `${main}<div class="pick-sub">${f.temp(s('temperature_2m'), true)} · ${f.arrow(dir)} ${f.wind(s('wind_speed_10m'), true)} · ${f.precip(s('precipitation'), true)}/h</div>
-    <button class="pick-more" data-detail>Pronóstico detallado ›</button>`;
 }
-function refreshPick() {
-  if (!S.pick || !S.popup || !S.map.hasLayer(S.popup)) return;
-  S.popup.setContent(pickHtml(S.pick));
+
+function pickValue(ll) {
+  const spec = LAYERS[S.layer];
+  const s = (n) => S.field.sample(n, ll.lat, ll.lng);
+  if (spec.kind) {
+    // En radar/satélite se muestra el viento del modelo
+    const u = s('f_surface_u'), v = s('f_surface_v');
+    const dir = u !== null && v !== null ? (Math.atan2(-u, -v) * 180 / Math.PI + 360) % 360 : null;
+    return { label: 'Viento', val: f.wind(s('wind_speed_10m')), unit: f.windUnit(), dir };
+  }
+  const [, vName] = spec.src(S.level);
+  const U = UNITS[spec.unit];
+  const val = s(vName);
+  let dir = null;
+  if (spec.flow || S.layer === 'wind' || S.layer === 'gust') {
+    const fk = spec.flow ? 'f_' + spec.flow : spec.levels ? 'f_' + S.level : 'f_surface';
+    const u = s(fk + '_u'), v = s(fk + '_v');
+    if (u !== null && v !== null) dir = spec.flow === 'currents' ? (Math.atan2(u, v) * 180 / Math.PI + 540) % 360 : (Math.atan2(-u, -v) * 180 / Math.PI + 360) % 360;
+  }
+  return { label: spec.label, val: val === null ? '–' : (U.fmt(val) || '0'), unit: U.label(), dir };
 }
+
+function updatePicker() {
+  const box = el('wPicker');
+  if (!box || !S.pick) return;
+  const spec = LAYERS[S.layer];
+  const v = pickValue(S.pick);
+  const model = api.MODELS.find((m) => m.id === settings.model)?.short || settings.model;
+  const sub = spec.kind ? 'modelo ' + model : `${model}, ${spec.levels ? LEVELS[S.level].label : 'Superficie'}`;
+  box.querySelector('.wp-label').innerHTML = `<b>${v.label}</b><small>${sub}</small>`;
+  box.querySelector('.wp-val').innerHTML = `${v.val}<small>${v.unit}</small>${v.dir !== null ? `<span class="wp-dir">${f.arrow(v.dir)}${f.dirName(v.dir)}</span>` : ''}`;
+}
+
 function pickAt(latlng) {
   S.pick = latlng;
-  const panelH = document.querySelector('.map-panel')?.offsetHeight || 200;
-  S.popup = L.popup({ maxWidth: 260, autoPan: true, closeButton: false, autoPanPaddingTopLeft: [10, 110], autoPanPaddingBottomRight: [60, panelH + 16], className: 'pick-pop' }).setLatLng(latlng).setContent(pickHtml(latlng)).openOn(S.map);
-  // El punto tocado pasa a ser el lugar seleccionado (como en Windy)
+  el('wSearch').classList.add('hidden');
+  el('wPicker').classList.remove('hidden');
+  updatePicker();
   S.marker.setLatLng(latlng);
+  // El punto tocado pasa a ser el lugar seleccionado (como en Windy)
   api.reverseGeocode(latlng.lat, latlng.lng).then((p) => {
     p.lat = latlng.lat; p.lon = latlng.lng;
     S.keepView = true;
     setPlace(p);
   });
 }
+function closePicker() {
+  S.pick = null;
+  el('wPicker').classList.add('hidden');
+  el('wSearch').classList.remove('hidden');
+}
+function highlightStrip() { /* el panel de horas ahora está en el detalle */ }
 
-// ---------- Pronóstico del punto (panel inferior) ----------
-let fcData = null;
-async function renderForecastStrip() {
-  const box = el('mapFc');
-  if (!box) return;
-  const p = state.place;
-  box.innerHTML = `<div class="fc-head"><span class="fc-title"><b>${f.esc(p.name)}</b><span class="tiny">Cargando pronóstico…</span></span></div>`;
-  try {
-    const d = await getForecast();
-    fcData = d;
-    const h = d.hourly;
-    const key = d.current.time.slice(0, 13);
-    let ni = h.time.findIndex((t) => t.slice(0, 13) === key);
-    if (ni < 0) ni = 0;
-    const c = d.current;
-    let cells = '';
-    for (let i = ni; i < Math.min(h.time.length, ni + 168); i++) {
-      const t = h.time[i];
-      const newDay = f.hh(t) === '00';
-      const pr = h.precipitation[i];
-      cells += `<button class="fc-cell${newDay ? ' daystart' : ''}${h.is_day[i] ? '' : ' night'}" data-t="${t}" title="${f.dayLong(t)} ${f.hhmm(t)}">
-        <span class="fh">${newDay ? f.dayShort(t) : f.hh(t)}</span>
-        ${wxIcon(h.weather_code[i], h.is_day[i])}
-        <span class="ft">${f.temp(h.temperature_2m[i])}</span>
-        <span class="fr">${pr >= 0.1 ? f.precip(pr) : ''}</span>
-        <span class="fw">${f.arrow(h.wind_direction_10m[i])}${f.wind(h.wind_speed_10m[i])}</span>
-      </button>`;
-    }
-    // Resumen de días (como la cabecera de Windy)
-    const dd = d.daily;
-    const ti = Math.max(0, dd.time.indexOf(c.time.slice(0, 10)));
-    const days = dd.time.slice(ti, ti + 7).map((day, k) => `<button class="fc-day" data-day="${day}">
-      <span class="tiny">${k === 0 ? 'Hoy' : f.dayShort(day)}</span>${wxIcon(dd.weather_code[ti + k], 1)}
-      <span class="small"><b>${f.temp(dd.temperature_2m_max[ti + k])}</b> ${f.temp(dd.temperature_2m_min[ti + k])}</span></button>`).join('');
-    box.innerHTML = `<div class="fc-head" id="fcHead">
-        <span class="fc-now">${wxIcon(c.weather_code, c.is_day)}<b class="num">${f.temp(c.temperature_2m)}</b></span>
-        <span class="fc-title"><b>${f.esc(p.name)}</b><span class="tiny">${wxDesc(c.weather_code)} · ${f.arrow(c.wind_direction_10m)} ${f.wind(c.wind_speed_10m, true)} · rachas ${f.wind(c.wind_gusts_10m)}</span></span>
-        <button class="small fc-detail" id="fcDetail">Detalle</button>
-        <button class="fc-toggle" id="fcToggle" aria-label="Plegar"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg></button>
-      </div>
-      <div class="fc-days">${days}</div>
-      <div class="fc-strip" id="fcStrip">${cells}</div>`;
-    box.querySelectorAll('.fc-cell').forEach((b) => { b.onclick = () => jumpToLocal(b.dataset.t); });
-    el('fcDetail').onclick = () => openDetail(el('view-map'));
-    box.querySelector('.fc-title').onclick = () => openDetail(el('view-map'));
-    box.querySelectorAll('.fc-day').forEach((b) => { b.onclick = () => jumpToLocal(b.dataset.day + (b.dataset.day === c.time.slice(0, 10) ? c.time.slice(10, 13) + ':00' : 'T12:00')); });
-    // Por defecto compacto (como Windy): días; al desplegar, también hora a hora
-    el('fcToggle').onclick = () => {
-      const open = !box.classList.contains('expanded');
-      box.classList.toggle('expanded', open);
-      save('map.fcExpanded', open);
-    };
-    box.classList.toggle('expanded', load('map.fcExpanded', false));
-    highlightStrip();
-  } catch (e) {
-    box.innerHTML = `<div class="fc-head"><span class="fc-title"><b>${f.esc(p.name)}</b><span class="tiny">Sin datos: ${f.esc(e.message)}</span></span></div>`;
-  }
+// ---------- Estado y avisos ----------
+let statusTimer = null;
+function setStatus(msg, kind = 'info') {
+  const s = el('mapStatusTxt');
+  if (s) s.textContent = msg;
+  const pill = el('wStatus');
+  if (!pill) return;
+  clearTimeout(statusTimer);
+  if (kind === 'ok') { pill.classList.add('hidden'); return; }
+  pill.textContent = msg;
+  pill.classList.toggle('err', kind === 'error');
+  pill.classList.remove('hidden');
+  if (kind === 'error') statusTimer = setTimeout(() => pill.classList.add('hidden'), 7000);
 }
 
-// Hora local del lugar → índice de la rejilla del mapa (UTC)
-function jumpToLocal(localT) {
-  if (!S.grid || !fcData) return;
-  const utc = new Date(Date.parse(localT + ':00Z') - fcData.utc_offset_seconds * 1000).toISOString().slice(0, 13);
-  const i = S.grid.times.findIndex((t) => t.slice(0, 13) === utc);
-  if (i < 0) { toast('Esa hora queda fuera del horizonte del mapa (amplíalo en opciones)'); return; }
-  if (LAYERS[S.layer].kind) { S.layer = 'wind'; applyLayer(); }
-  setTime(Math.max(S.t0, i));
-  const strip = el('fcStrip');
-  if (strip) {
-    const cell = strip.querySelector(`[data-t="${localT}"]`);
-    if (cell) strip.scrollTo({ left: cell.offsetLeft - 8, behavior: 'smooth' });
-  }
-}
-
-function highlightStrip() {
-  const g = S.grid;
-  const strip = el('fcStrip');
-  if (!strip || !g || !fcData || LAYERS[S.layer].kind) return;
-  const local = new Date(Date.parse(g.times[S.t] + ':00Z') + fcData.utc_offset_seconds * 1000).toISOString().slice(0, 13);
-  let target = null;
-  strip.querySelectorAll('.fc-cell').forEach((c) => {
-    const on = c.dataset.t.slice(0, 13) === local;
-    c.classList.toggle('sel', on);
-    if (on) target = c;
-  });
-  if (target && S.playing) strip.scrollTo({ left: target.offsetLeft - strip.clientWidth / 2 + target.clientWidth / 2, behavior: 'smooth' });
-}
-
-// ---------- Interfaz ----------
-function renderChips() {
-  const box = el('mapLayers');
-  const list = QUICK.includes(S.layer) ? QUICK : [S.layer, ...QUICK];
-  box.innerHTML = `<div class="chips">
-    <button class="chip chip-layers" id="openLayers"><svg viewBox="0 0 24 24"><path d="M12 16l-7.4-5.7L3 11.5 12 18.5l9-7-1.6-1.2zm0-2.5l7.4-5.7L21 6.5 12-.5 3 6.5l1.6 1.3z" transform="translate(0 3)"/></svg>Capas</button>
-    ${list.map((k) => `<button class="chip${k === S.layer ? ' on' : ''}" data-v="${k}">${LAYERS[k].short || LAYERS[k].label}</button>`).join('')}
-  </div>
-  ${LAYERS[S.layer].levels ? `<div class="chips levels">${Object.entries(LEVELS).map(([k, v]) => `<button class="chip${k === S.level ? ' on' : ''}" data-lv="${k}">${v.label}</button>`).join('')}</div>` : ''}`;
-  box.querySelectorAll('[data-v]').forEach((b) => { b.onclick = () => selectLayer(b.dataset.v); });
-  box.querySelectorAll('[data-lv]').forEach((b) => {
-    b.onclick = () => { S.level = b.dataset.lv; applyLayer(); };
-  });
-  el('openLayers').onclick = () => el('layerSheet').classList.toggle('hidden');
-  const on = box.querySelector('.chip.on');
-  if (on) on.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-}
-
+// ---------- Menú lateral (botón rojo): capas con miniaturas, secciones y opciones ----------
+let menuCat = 'Todo';
 function selectLayer(k) {
   S.layer = k;
   stopPlay();
-  el('layerSheet').classList.add('hidden');
   applyLayer();
 }
 
-function buildLayerSheet() {
-  const cats = {};
-  for (const [k, v] of Object.entries(LAYERS)) (cats[v.cat] ||= []).push(k);
-  el('layerSheet').innerHTML = `<div class="ls-head"><b>Capas</b><button class="icon-btn" id="closeLayers">✕</button></div>
-    ${Object.entries(cats).map(([cat, keys]) => `<h3>${cat}</h3><div class="ls-grid">${keys.map((k) => `<button class="ls-item${k === S.layer ? ' on' : ''}" data-v="${k}">${LAYERS[k].label}</button>`).join('')}</div>`).join('')}
-    <p class="tiny">Las capas de mar y aire solo muestran datos sobre el mar o donde hay modelo de calidad del aire (CAMS).</p>`;
-  el('layerSheet').querySelectorAll('[data-v]').forEach((b) => { b.onclick = () => { selectLayer(b.dataset.v); buildLayerSheet(); }; });
-  el('closeLayers').onclick = () => el('layerSheet').classList.add('hidden');
+function buildMenu() {
+  const m = el('wMenu');
+  if (!m) return;
+  const keys = Object.keys(LAYERS).filter((k) => menuCat === 'Todo' || LAYERS[k].cat === menuCat);
+  const spec = LAYERS[S.layer];
+  const sel = (name, opts, cur) => `<select class="wm-select" name="${name}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const tog = (name, label, on) => `<label class="wm-toggle"><span>${label}</span><input type="checkbox" name="${name}" ${on ? 'checked' : ''}><i></i></label>`;
+  m.innerHTML = `
+    <button class="w-close wm-close" data-close aria-label="Cerrar">${SVG(IC.close)}</button>
+    <div class="wm-nav">
+      <a href="#/inicio">${SVG(IC.cloud)}<span>Pronóstico</span></a>
+      <a href="#/horas">${SVG(IC.clock)}<span>Por horas</span></a>
+      <a href="#/tendencia">${SVG(IC.trend)}<span>Largo plazo</span></a>
+      <button data-favs>${SVG(IC.heart)}<span>Mis favoritos</span></button>
+      <a href="#/mas">${SVG(IC.grid)}<span>Más</span></a>
+      <a href="#/ajustes">${SVG(IC.gear)}<span>Configuración</span></a>
+    </div>
+    <div class="wm-cats">${CATS.map((c) => `<button class="${c === menuCat ? 'on' : ''}" data-cat="${c}">${c}</button>`).join('')}</div>
+    <div class="wm-grid">${keys.map((k) => `<button class="wm-tile${k === S.layer ? ' on' : ''}" data-layer="${k}">${thumb(k)}<span>${LAYERS[k].label}</span></button>`).join('')}</div>
+    ${spec.levels ? `<h3>Altitud</h3><div class="wm-cats">${Object.entries(LEVELS).map(([k, v]) => `<button class="${k === S.level ? 'on' : ''}" data-level="${k}">${v.label}</button>`).join('')}</div>` : ''}
+    ${spec.kind === 'sat' ? `<h3>Imagen de satélite</h3>${sel('sat', Object.entries(SATS).map(([k, v]) => [k, v.label]), S.sat)}` : ''}
+    <h3>Modelo</h3>${sel('model', api.MODELS.map((x) => [x.id, x.name]), settings.model)}
+    <h3>En el mapa</h3>
+    ${tog('particles', 'Partículas animadas', S.particles)}
+    ${tog('cities', 'Ciudades con su valor', S.cities)}
+    ${tog('values', 'Números en rejilla', S.values)}
+    ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
+    <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
+    <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
+    <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
+    <div class="wm-row"><span>Resolución</span>${sel('grid', [['low', 'Baja'], ['normal', 'Normal'], ['high', 'Alta']], settings.mapGrid)}</div>
+    <p class="wm-status" id="mapStatusTxt"></p>
+    <p class="wm-note">Datos: Open-Meteo (ECMWF, NOAA, DWD, Météo-France…), RainViewer, EUMETSAT y NASA. Más resolución u horizonte gastan más cuota gratuita (10.000 consultas/día).</p>`;
+  m.querySelector('[data-close]').onclick = closeMenu;
+  m.querySelector('[data-favs]').onclick = () => { closeMenu(); el('placeBtn').click(); };
+  m.querySelectorAll('a').forEach((a) => { a.addEventListener('click', closeMenu); });
+  m.querySelectorAll('[data-cat]').forEach((b) => { b.onclick = () => { menuCat = b.dataset.cat; buildMenu(); }; });
+  m.querySelectorAll('[data-layer]').forEach((b) => { b.onclick = () => { selectLayer(b.dataset.layer); closeMenu(); }; });
+  m.querySelectorAll('[data-level]').forEach((b) => { b.onclick = () => { S.level = b.dataset.level; applyLayer(); }; });
+  m.onchange = (e) => {
+    const { name, value, checked } = e.target;
+    if (name === 'model') { settings.model = value; saveSettings(); }
+    if (name === 'sat') { S.sat = value; stopPlay(); showSat(); updateSlider(); updateLegend(); }
+    if (name === 'base') { settings.mapBase = value; saveSettings(); }
+    if (name === 'grid') { settings.mapGrid = value; saveSettings(); }
+    if (name === 'days') { S.days = +value; loadData(true); }
+    if (name === 'iso') { S.iso = value; save('map.iso', value); sideState(); prepareLayer(); }
+    if (name === 'particles') { S.particles = checked; sideState(); prepareLayer(); }
+    if (name === 'values') { S.values = checked; save('map.values', checked); sideState(); prepareLayer(); }
+    if (name === 'borders') { S.borders = checked; save('map.borders', checked); showBorders(); }
+    if (name === 'cities') {
+      S.cities = checked;
+      save('map.cities', checked);
+      if (S.labels) { if (S.cities) S.map.removeLayer(S.labels); else S.labels.addTo(S.map); }
+      prepareLayer();
+    }
+  };
+  const st = el('mapStatusTxt');
+  if (st && S.spec) st.textContent = `${api.modelName(settings.model)} · rejilla ${S.spec.nx}×${S.spec.ny} puntos`;
 }
+function openMenu() { buildMenu(); el('wMenu').classList.add('open'); el('wMenuShade').classList.add('open'); }
+function closeMenu() { el('wMenu').classList.remove('open'); el('wMenuShade').classList.remove('open'); }
 
 function sideState() {
   el('mapParticles').classList.toggle('on', S.particles);
@@ -752,34 +792,46 @@ function sideState() {
 function buildUI(root) {
   root.innerHTML = `
     <div id="map"></div>
-    <div class="map-layers" id="mapLayers"></div>
-    <div class="map-side">
-      <button id="mapMenuBtn" title="Opciones del mapa"><svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7 7 0 0 0-1.7-1L15 3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.5L6.5 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 0 0 1.7 1L11 21h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></button>
-      <button id="mapParticles" title="Partículas animadas"><svg viewBox="0 0 24 24"><path d="M3 8h10.5A2.5 2.5 0 1 0 11 5.5h-2A4.5 4.5 0 1 1 13.5 10H3zm0 4h15.5a3.5 3.5 0 1 1-3.5 3.5h2a1.5 1.5 0 1 0 1.5-1.5H3zm0-8h4v2H3z"/></svg></button>
-      <button id="mapIso" title="Isolíneas"><svg viewBox="0 0 24 24"><path d="M12 4C7 4 3 7.6 3 12s4 8 9 8 9-3.6 9-8-4-8-9-8zm0 14c-3.9 0-7-2.7-7-6s3.1-6 7-6 7 2.7 7 6-3.1 6-7 6zm0-10c-2.2 0-4 1.8-4 4s1.8 4 4 4 4-1.8 4-4-1.8-4-4-4zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg></button>
-      <button id="mapValues" title="Valores en el mapa"><svg viewBox="0 0 24 24"><text x="12" y="16.5" text-anchor="middle" font-size="11" font-weight="800" font-family="system-ui">123</text></svg></button>
-      <button id="mapHome" title="Ir a mi lugar"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21z"/></svg></button>
+    <div class="w-top">
+      <div class="w-search" id="wSearch">
+        <button class="w-sb-main" id="wSearchBtn">${SVG(IC.search)}<span id="wPlaceName"></span></button>
+        <button class="w-sb-ico" id="wGps" title="Mi ubicación">${SVG(IC.gps)}</button>
+        <button class="w-sb-ico" id="wFav" title="Favorito"></button>
+      </div>
+      <div class="w-picker hidden" id="wPicker">
+        <div class="wp-row"><div class="wp-label"></div><div class="wp-val"></div></div>
+        <div class="wp-actions">
+          <button class="w-pill yellow" id="wpDetail">${SVG(IC.target)}<span>Pronóstico<small>para este punto</small></span></button>
+          <button class="w-pill" id="wpFav">${SVG(IC.heart)}<span>Guardar<small>en favoritos</small></span></button>
+        </div>
+        <button class="w-close wp-close" id="wpClose" aria-label="Cerrar">${SVG(IC.close)}</button>
+      </div>
+      <div class="w-status hidden" id="wStatus"></div>
     </div>
-    <div class="map-menu hidden" id="mapMenu"></div>
-    <div class="layer-sheet hidden" id="layerSheet"></div>
-    <div class="map-panel">
-      <div class="map-fc" id="mapFc"></div>
-      <div class="map-time">
-        <button class="play-btn" id="mapPlay">${ICON.play}</button>
-        <div class="tl">
-          <span class="tl-bubble hidden" id="tlBubble"></span>
-          <input type="range" id="mapRange" min="0" max="0" value="0">
-          <div class="tl-days" id="mapDays"></div>
+    <div class="w-side">
+      <button id="mapIso" title="Isolíneas">${SVG(IC.iso)}</button>
+      <button id="mapParticles" title="Partículas animadas">${SVG(IC.wind)}</button>
+      <button id="mapValues" title="Números en el mapa">${SVG(IC.num)}</button>
+      <button id="mapHome" title="Ir a mi lugar">${SVG(IC.home)}</button>
+      <button id="mapSearch" title="Buscar">${SVG(IC.search)}</button>
+    </div>
+    <button class="w-menu-btn" id="wMenuBtn" aria-label="Menú y capas">${SVG(IC.menu)}</button>
+    <div class="w-shade" id="wMenuShade"></div>
+    <aside class="w-menu" id="wMenu"></aside>
+    <div class="w-bottom" id="wBottom">
+      <div class="w-timeline">
+        <button class="w-play" id="mapPlay">${ICON.play}</button>
+        <div class="w-tl">
+          <span class="w-bubble hidden" id="tlBubble"></span>
+          <span class="w-tline hidden" id="tlLine"></span>
+          <div class="w-days" id="mapDays"></div>
+          <input type="range" id="mapRange" min="0" max="0" value="0" aria-label="Hora">
         </div>
       </div>
-      <div class="map-legend" id="mapLegend"></div>
-      <div id="mapSatSel" class="hidden" style="margin-top:6px"></div>
-      <button class="map-status" id="mapStatus"><span id="mapTime">—</span> · <span id="mapStatusTxt"></span> ▾</button>
+      <div class="w-legend" id="mapLegend"></div>
     </div>`;
 
-  renderChips();
-  buildLayerSheet();
-  el('mapSatSel').append(selectEl(Object.entries(SATS).map(([k, v]) => [k, v.label]), S.sat, (v) => { S.sat = v; stopPlay(); showSat(); updateSlider(); }));
+  updateTopBar();
   el('mapRange').addEventListener('input', (e) => setTime(+e.target.value));
   // Atajos: ← → hora anterior/siguiente, espacio reproducir
   document.addEventListener('keydown', (e) => {
@@ -787,15 +839,25 @@ function buildUI(root) {
     const r = el('mapRange');
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
       e.preventDefault();
-      const v = clampInt(+r.value + (e.key === 'ArrowRight' ? 1 : -1), +r.min, +r.max);
-      setTime(v);
+      setTime(clampInt(+r.value + (e.key === 'ArrowRight' ? 1 : -1), +r.min, +r.max));
     } else if (e.key === ' ') {
       e.preventDefault();
       togglePlay();
+    } else if (e.key === 'Escape') {
+      closeMenu();
     }
   });
   window.addEventListener('resize', placeBubble);
   el('mapPlay').onclick = togglePlay;
+  el('wSearchBtn').onclick = () => el('placeBtn').click();
+  el('mapSearch').onclick = () => el('placeBtn').click();
+  el('wGps').onclick = () => el('gpsBtn').click();
+  el('wFav').onclick = () => { toggleFavorite(); toast(isFavorite() ? 'Guardado en favoritos' : 'Quitado de favoritos'); };
+  el('wpFav').onclick = () => { if (!isFavorite()) toggleFavorite(); toast('Guardado en favoritos'); };
+  el('wpDetail').onclick = () => { closePicker(); openDetail(el('view-map')); };
+  el('wpClose').onclick = closePicker;
+  el('wMenuBtn').onclick = openMenu;
+  el('wMenuShade').onclick = closeMenu;
   el('mapParticles').onclick = () => { S.particles = !S.particles; sideState(); prepareLayer(); };
   el('mapIso').onclick = () => {
     const i = ISO_MODES.findIndex(([k]) => k === S.iso);
@@ -807,41 +869,7 @@ function buildUI(root) {
   };
   el('mapValues').onclick = () => { S.values = !S.values; save('map.values', S.values); sideState(); prepareLayer(); };
   el('mapHome').onclick = () => S.map.setView([state.place.lat, state.place.lon], Math.max(S.map.getZoom(), 7));
-  el('mapMenuBtn').onclick = () => el('mapMenu').classList.toggle('hidden');
-  el('mapStatus').onclick = () => el('mapMenu').classList.toggle('hidden');
   sideState();
-  buildMenu();
-}
-
-function buildMenu() {
-  const m = el('mapMenu');
-  const radio = (name, opts, cur) => opts.map(([v, l]) => `<label><input type="radio" name="${name}" value="${v}" ${v === cur ? 'checked' : ''}> ${l}</label>`).join('');
-  m.innerHTML = `
-    <h3>Modelo</h3><div id="mapModelSel"></div>
-    <h3>Mapa base</h3>${radio('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}
-    <h3>Horizonte</h3>${radio('days', [['2', '2 días'], ['3', '3 días'], ['5', '5 días'], ['7', '7 días'], ['10', '10 días']], String(S.days))}
-    <h3>Isolíneas</h3>${radio('iso', ISO_MODES, S.iso)}
-    <h3>Líneas y nombres</h3><label><input type="checkbox" name="borders" ${S.borders ? 'checked' : ''}> Costas, fronteras y provincias</label>
-    <label><input type="checkbox" name="cities" ${S.cities ? 'checked' : ''}> Ciudades con su valor</label>
-    <h3>Resolución</h3>${radio('grid', [['low', 'Baja (menos datos)'], ['normal', 'Normal'], ['high', 'Alta (más peticiones)']], settings.mapGrid)}
-    <p class="tiny" style="margin:8px 0 0">El mapa interpola una rejilla de puntos del modelo. Más resolución u horizonte = más detalle, pero consume más cuota gratuita (10.000 llamadas/día).</p>`;
-  m.querySelector('#mapModelSel').append(selectEl(api.MODELS.map((x) => [x.id, x.name]), settings.model, (v) => {
-    settings.model = v; saveSettings();
-  }));
-  m.onchange = (e) => {
-    const { name, value } = e.target;
-    if (name === 'base') { settings.mapBase = value; saveSettings(); }
-    if (name === 'grid') { settings.mapGrid = value; saveSettings(); }
-    if (name === 'days') { S.days = +value; loadData(true); }
-    if (name === 'iso') { S.iso = value; save('map.iso', value); sideState(); prepareLayer(); }
-    if (name === 'borders') { S.borders = e.target.checked; save('map.borders', S.borders); showBorders(); }
-    if (name === 'cities') {
-      S.cities = e.target.checked;
-      save('map.cities', S.cities);
-      if (S.labels) { if (S.cities) S.map.removeLayer(S.labels); else S.labels.addTo(S.map); }
-      prepareLayer();
-    }
-  };
 }
 
 function setBase() {
@@ -869,7 +897,7 @@ export default {
       map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
       // La atribución va justo encima del panel inferior, que cambia de altura
-      const panel = root.querySelector('.map-panel');
+      const panel = root.querySelector('.w-bottom');
       const fitAttribution = () => {
         const br = map.getContainer().querySelector('.leaflet-bottom.leaflet-right');
         if (br) br.style.bottom = panel.offsetHeight + 10 + 'px';
@@ -889,17 +917,11 @@ export default {
       // Un toque elige el punto; si llega un segundo toque (doble toque = zoom) se cancela
       let clickTimer = null;
       map.on('click', (e) => {
-        el('mapMenu').classList.add('hidden');
-        el('layerSheet').classList.add('hidden');
         clearTimeout(clickTimer);
         clickTimer = setTimeout(() => pickAt(e.latlng), 280);
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
-      map.getContainer().addEventListener('click', (e) => {
-        if (e.target.closest('[data-detail]')) { e.stopPropagation(); S.map.closePopup(); openDetail(el('view-map')); }
-      }, true);
       map.whenReady(() => { S.field.redraw(); loadData(true); });
-      renderForecastStrip();
       loadRadar();
       applyLayer();
       setInterval(() => {
@@ -916,13 +938,19 @@ export default {
     S.marker.setLatLng([state.place.lat, state.place.lon]);
     S.map.invalidateSize();
     const ll = L.latLng(state.place.lat, state.place.lon);
+    const placeKey = `${state.place.lat.toFixed(3)},${state.place.lon.toFixed(3)}`;
+    const placeChanged = placeKey !== S.placeKey;
+    S.placeKey = placeKey;
     if (!S.keepView && !S.map.getBounds().pad(-0.1).contains(ll)) S.map.setView(ll, S.map.getZoom());
     const modelChanged = S.modelKey && S.modelKey !== settings.model;
     S.modelKey = settings.model;
+    // Como en Windy: al elegir un lugar en el buscador se abre su pronóstico
+    const fromSearch = placeChanged && !S.keepView;
     S.keepView = false;
+    if (fromSearch) { closePicker(); S.map.setView(ll, Math.max(S.map.getZoom(), 7)); }
     buildMenu();
-    renderForecastStrip();
-    if (detailOpen()) openDetail(root);
+    updateTopBar();
+    if (detailOpen() || fromSearch) openDetail(root);
     updatePlaces();
     prepareLayer();
     loadData(modelChanged || settings.mapGrid !== S.gridRes);
@@ -941,3 +969,5 @@ export default {
 };
 S.modelKey = settings.model;
 S.gridRes = settings.mapGrid;
+S.placeKey = `${state.place.lat.toFixed(3)},${state.place.lon.toFixed(3)}`;
+on('favorites', () => updateTopBar());

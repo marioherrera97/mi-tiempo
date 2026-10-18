@@ -31,6 +31,8 @@ function route() {
   const name = VIEWS[r] ? r : 'mapa';
   if (current && current !== name) VIEWS[current].hide?.();
   $$('.view').forEach((v) => v.classList.toggle('active', v.dataset.route === name));
+  // El mapa ocupa toda la pantalla, como Windy (sin barra superior ni pestañas)
+  document.body.classList.toggle('map-mode', name === 'mapa');
   $$('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === (PARENT_TAB[name] || name)));
   const changed = current !== name;
   current = name;

@@ -1,11 +1,11 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
 
 const SHELL_FILES = [
-  './', 'index.html', 'manifest.webmanifest', 'css/styles.css',
+  './', 'index.html', 'manifest.webmanifest', 'css/styles.css', 'css/windy.css',
   'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/chart.js', 'vendor/land.json', 'vendor/borders.json', 'vendor/regions.json', 'vendor/cities.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/state.js', 'js/api.js', 'js/data.js', 'js/format.js', 'js/icons.js', 'js/colors.js',

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mi Tiempo</title>
+  <meta name="description" content="Pronóstico del tiempo hora a hora, a 16 días, ensembles a 35 días, estacional a 6 meses, mapas de viento, radar, mar y calidad del aire.">
+  <meta name="theme-color" content="#11161d">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="css/styles.css">
+  <script>
+    // Aplica el tema antes de pintar para evitar parpadeos
+    try {
+      const s = JSON.parse(localStorage.getItem('mitiempo.settings') || '{}');
+      if (s.theme && s.theme !== 'auto') document.documentElement.dataset.theme = s.theme;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="place-btn" id="placeBtn" aria-label="Cambiar ubicación">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+      <span class="place-text">
+        <span class="place-name" id="placeName">—</span>
+        <span class="place-sub" id="placeSub"></span>
+      </span>
+      <svg class="ico chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+    </button>
+    <div class="top-actions">
+      <button class="icon-btn" id="favBtn" aria-label="Guardar en favoritos" title="Favorito">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 17.3l6.2 3.7-1.6-7 5.4-4.7-7.1-.6L12 2 9.1 8.7 2 9.3l5.4 4.7-1.6 7z"/></svg>
+      </button>
+      <button class="icon-btn" id="refreshBtn" aria-label="Actualizar" title="Actualizar">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M17.6 6.4A8 8 0 1 0 19.7 14h-2.1a6 6 0 1 1-1.4-6.2L13 11h7V4z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="view" id="view-home" data-route="inicio"></section>
+    <section class="view" id="view-hourly" data-route="horas"></section>
+    <section class="view view-map" id="view-map" data-route="mapa"></section>
+    <section class="view" id="view-trend" data-route="tendencia"></section>
+    <section class="view" id="view-more" data-route="mas"></section>
+    <section class="view" id="view-compare" data-route="modelos"></section>
+    <section class="view" id="view-marine" data-route="mar"></section>
+    <section class="view" id="view-air" data-route="aire"></section>
+    <section class="view" id="view-history" data-route="historico"></section>
+    <section class="view" id="view-settings" data-route="ajustes"></section>
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <a href="#/mapa" data-tab="mapa">
+      <svg viewBox="0 0 24 24"><path d="M15 5.1L9 3 3 5v16l6-2.1 6 2.1 6-2V3zM15 19l-6-2.1V5l6 2.1z"/></svg>
+      <span>Mapa</span>
+    </a>
+    <a href="#/inicio" data-tab="inicio">
+      <svg viewBox="0 0 24 24"><path d="M6.8 17.5h10.4a4.3 4.3 0 0 0 .5-8.6A6 6 0 0 0 6.2 10a3.8 3.8 0 0 0 .6 7.5z"/></svg>
+      <span>Pronóstico</span>
+    </a>
+    <a href="#/horas" data-tab="horas">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7z"/></svg>
+      <span>Por horas</span>
+    </a>
+    <a href="#/tendencia" data-tab="tendencia">
+      <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8v4h2V3h-8v2h4l-6 6-4-4-7.4 7.4z"/></svg>
+      <span>Largo plazo</span>
+    </a>
+    <a href="#/mas" data-tab="mas">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+      <span>Más</span>
+    </a>
+  </nav>
+
+  <!-- Hoja de búsqueda de ubicación -->
+  <div class="sheet-backdrop" id="placeSheet" hidden>
+    <div class="sheet" role="dialog" aria-label="Buscar ubicación">
+      <div class="sheet-head">
+        <input type="search" id="placeSearch" placeholder="Buscar ciudad, pueblo, playa, montaña…" autocomplete="off">
+        <button class="icon-btn" data-close aria-label="Cerrar">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg>
+        </button>
+      </div>
+      <button class="gps-btn" id="gpsBtn">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.1A7 7 0 0 0 13 5.1V3h-2v2.1A7 7 0 0 0 5.1 11H3v2h2.1a7 7 0 0 0 5.9 5.9V21h2v-2.1a7 7 0 0 0 5.9-5.9H21zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+        Usar mi ubicación actual
+      </button>
+      <div id="placeResults" class="place-list"></div>
+    </div>
+  </div>
+
+  <!-- Hoja de detalle de día -->
+  <div class="sheet-backdrop" id="daySheet" hidden>
+    <div class="sheet sheet-tall" role="dialog" aria-label="Detalle del día">
+      <div class="sheet-head">
+        <h2 id="daySheetTitle"></h2>
+        <button class="icon-btn" data-close aria-label="Cerrar">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg>
+        </button>
+      </div>
+      <div id="daySheetBody" class="sheet-body"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/chart.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

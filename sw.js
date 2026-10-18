@@ -1,18 +1,18 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
 
 const SHELL_FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/styles.css',
-  'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/chart.js', 'vendor/land.json', 'vendor/borders.json', 'vendor/regions.json',
+  'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/chart.js', 'vendor/land.json', 'vendor/borders.json', 'vendor/regions.json', 'vendor/cities.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/state.js', 'js/api.js', 'js/data.js', 'js/format.js', 'js/icons.js', 'js/colors.js',
   'js/charts.js', 'js/ui.js', 'js/windlayer.js',
   'js/views/home.js', 'js/views/hourly.js', 'js/views/map.js', 'js/views/trend.js',
   'js/views/more.js', 'js/views/compare.js', 'js/views/marine.js', 'js/views/air.js',
-  'js/views/history.js', 'js/views/settings.js',
+  'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js',
 ];
 
 self.addEventListener('install', (e) => {

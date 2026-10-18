@@ -69,6 +69,9 @@ const SCALES = {
     [0, [0, 0, 0, 0]], [10, [230, 200, 140, 0.3]], [50, [225, 175, 90, 0.55]], [150, [210, 140, 50, 0.72]],
     [400, [180, 90, 30, 0.85]], [1000, [120, 50, 20, 0.92]],
   ],
+  period: [ // s
+    [0, [60, 80, 150]], [5, [60, 150, 200]], [8, [80, 200, 150]], [11, [220, 210, 70]], [14, [240, 140, 50]], [18, [210, 50, 80]], [22, [150, 40, 140]],
+  ],
   aqi: [ // índice europeo
     [0, [80, 240, 230]], [20, [80, 204, 170]], [40, [240, 230, 65]], [60, [255, 80, 80]], [80, [150, 0, 50]], [100, [125, 33, 129]],
   ],
@@ -93,6 +96,16 @@ const withAlpha = (c) => (c.length === 4 ? c : [...c, 1]);
 export function css(scale, v, alphaMul = 1) {
   const [r, g, b, a] = colorAt(scale, v);
   return `rgba(${r | 0},${g | 0},${b | 0},${(a * alphaMul).toFixed(2)})`;
+}
+
+// Color de texto legible sobre el color de la escala (oscuro sobre claros, blanco sobre oscuros)
+export function textOn(scale, v, alphaMul = 1) {
+  const [r, g, b, a] = colorAt(scale, v);
+  const alpha = Math.min(1, a * alphaMul);
+  // Mezcla aproximada con el fondo oscuro de la tarjeta
+  const mix = (c) => c * alpha + 30 * (1 - alpha);
+  const lum = (0.299 * mix(r) + 0.587 * mix(g) + 0.114 * mix(b)) / 255;
+  return lum > 0.55 ? '#0d141c' : '#ffffff';
 }
 
 // Gradiente CSS para leyendas

@@ -1,7 +1,7 @@
 // Vista "Mapa" (pantalla principal, al estilo Windy): capas de modelo con partículas animadas,
 // altitudes, isobaras, valores sobre el mapa, radar, satélite y pronóstico del punto seleccionado.
 /* global L */
-import { state, settings, saveSettings, setPlace, load, save } from '../state.js';
+import { state, settings, saveSettings, setPlace, load, save, on } from '../state.js';
 import { getForecast } from '../data.js';
 import { wxIcon, wxDesc } from '../icons.js';
 import * as api from '../api.js';
@@ -9,6 +9,7 @@ import * as f from '../format.js';
 import { gradientCSS } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
 import { toast, debounce, selectEl } from '../ui.js';
+import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
 
 // ---------- Altitudes ----------
 const LEVELS = {
@@ -30,7 +31,8 @@ const GROUPS = {
   l700hPa: { api: 'forecast', vars: lvVars('700hPa') },
   l500hPa: { api: 'forecast', vars: lvVars('500hPa') },
   l300hPa: { api: 'forecast', vars: lvVars('300hPa') },
-  marine: { api: 'marine', vars: ['wave_height', 'wave_direction', 'wave_period', 'swell_wave_height', 'swell_wave_direction', 'swell_wave_period', 'sea_surface_temperature', 'ocean_current_velocity', 'ocean_current_direction'] },
+  marine: { api: 'marine', vars: ['wave_height', 'wave_direction', 'wave_period', 'swell_wave_height', 'swell_wave_direction', 'swell_wave_period', 'sea_surface_temperature', 'ocean_current_velocity', 'ocean_current_direction', 'wind_wave_height'] },
+  comfort: { api: 'forecast', vars: ['apparent_temperature', 'uv_index'] },
   air: { api: 'air', vars: ['european_aqi', 'pm2_5', 'pm10', 'dust', 'nitrogen_dioxide', 'ozone'] },
 };
 
@@ -48,6 +50,8 @@ const UNITS = {
   height: { label: () => (settings.distance === 'mi' ? 'ft' : 'm'), fmt: (v) => String(Math.round(settings.distance === 'mi' ? v * 3.28084 : v)), next: () => cycle('distance', ['km', 'mi']) },
   vis: { label: () => (settings.distance === 'mi' ? 'mi' : 'km'), fmt: (v) => (settings.distance === 'mi' ? (v / 1609).toFixed(1) : (v / 1000).toFixed(v < 10000 ? 1 : 0)), next: () => cycle('distance', ['km', 'mi']) },
   wave: { label: () => (settings.distance === 'mi' ? 'ft' : 'm'), fmt: (v) => (settings.distance === 'mi' ? (v * 3.28084).toFixed(0) : v.toFixed(1)), next: () => cycle('distance', ['km', 'mi']) },
+  uvi: { label: () => 'UV', fmt: (v) => (v < 0.5 ? '' : String(Math.round(v))) },
+  sec: { label: () => 's', fmt: (v) => String(Math.round(v)) },
   aqi: { label: () => 'EAQI', fmt: (v) => String(Math.round(v)) },
   ugm3: { label: () => 'µg/m³', fmt: (v) => (v < 1 ? '' : String(Math.round(v))) },
 };
@@ -63,6 +67,8 @@ const LAYERS = {
   snowdepth: { label: 'Espesor de nieve', cat: 'Lluvia y nieve', src: () => ['extra', 'snow_depth_cm'], scale: 'snow', range: () => [0, 150], unit: 'snow' },
   cape: { label: 'Tormentas (CAPE)', cat: 'Lluvia y nieve', src: () => ['extra', 'cape'], scale: 'cape', range: () => [0, 3500], unit: 'jkg' },
   temp: { label: 'Temperatura', short: 'Temp.', cat: 'Temperatura', levels: true, src: (lv) => [LEVELS[lv].group, LEVELS[lv].t], scale: 'temp', range: (lv) => (lv === '300hPa' ? [-70, 0] : lv === '500hPa' ? [-50, 10] : [-30, 45]), unit: 'temp' },
+  feels: { label: 'Sensación térmica', cat: 'Temperatura', src: () => ['comfort', 'apparent_temperature'], scale: 'temp', range: () => [-30, 45], unit: 'temp' },
+  uv: { label: 'Índice UV', cat: 'Temperatura', src: () => ['comfort', 'uv_index'], scale: 'uv', range: () => [0, 11], unit: 'uvi' },
   dew: { label: 'Punto de rocío', cat: 'Temperatura', src: () => ['extra', 'dew_point_2m'], scale: 'temp', range: () => [-30, 35], unit: 'temp' },
   freezing: { label: 'Isocero (0 °C)', cat: 'Temperatura', src: () => ['extra', 'freezing_level_height'], scale: 'freezing', range: () => [0, 5000], unit: 'height' },
   humidity: { label: 'Humedad', cat: 'Temperatura', levels: true, src: (lv) => (LEVELS[lv].rh ? [LEVELS[lv].group, LEVELS[lv].rh] : ['surface', 'relative_humidity_2m']), scale: 'humidity', range: () => [0, 100], unit: 'pct' },
@@ -74,6 +80,8 @@ const LAYERS = {
   pressure: { label: 'Presión', cat: 'Presión', src: () => ['surface', 'pressure_msl'], scale: 'pressure', range: () => [960, 1045], unit: 'hpa', iso: true },
   waves: { label: 'Olas', cat: 'Mar', src: () => ['marine', 'wave_height'], scale: 'waves', range: () => [0, 9], unit: 'wave', flow: 'waves' },
   swell: { label: 'Mar de fondo', cat: 'Mar', src: () => ['marine', 'swell_wave_height'], scale: 'waves', range: () => [0, 9], unit: 'wave', flow: 'swell' },
+  windwaves: { label: 'Mar de viento', cat: 'Mar', src: () => ['marine', 'wind_wave_height'], scale: 'waves', range: () => [0, 9], unit: 'wave', flow: 'waves' },
+  waveperiod: { label: 'Periodo de olas', cat: 'Mar', src: () => ['marine', 'wave_period'], scale: 'period', range: () => [0, 20], unit: 'sec', flow: 'waves' },
   sst: { label: 'Temperatura del mar', cat: 'Mar', src: () => ['marine', 'sea_surface_temperature'], scale: 'sst', range: () => [-2, 33], unit: 'temp' },
   currents: { label: 'Corrientes', cat: 'Mar', src: () => ['marine', 'ocean_current_velocity'], scale: 'currents', range: () => [0, 8], unit: 'wind', flow: 'currents' },
   aqi: { label: 'Calidad del aire', cat: 'Aire', src: () => ['air', 'european_aqi'], scale: 'aqi', range: () => [0, 100], unit: 'aqi' },
@@ -102,11 +110,11 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), particles: true, iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
-  satLayer: null, days: 3,
+  satFrames: [], satIdx: 0, days: 3,
 };
 if (!LAYERS[S.layer]) S.layer = 'wind';
 
@@ -153,11 +161,16 @@ async function loadData(force = false) {
   const covers = sp && south >= sp.south && north <= sp.north && west >= sp.west && east <= sp.east && z - sp.zoom < 2;
   const token = ++S.token;
   if (force || !covers) {
-    const { nx, ny } = gridDims(map.getSize());
-    const dlat = (north - south) / (ny - 1), dlon = (east - west) / (nx - 1);
+    // Rejilla encajada en múltiplos "redondos": vistas parecidas piden los mismos puntos y se reaprovecha la caché
+    const t = gridDims(map.getSize());
+    const NICE = [0.05, 0.1, 0.125, 0.2, 0.25, 0.4, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15];
+    const nice = (v) => NICE.find((x) => x >= v) || 15;
+    const dlat = nice((north - south) / (t.ny - 1)), dlon = nice((east - west) / (t.nx - 1));
+    const s0 = Math.max(-80, Math.floor(south / dlat) * dlat), w0 = Math.max(-180, Math.floor(west / dlon) * dlon);
+    const ny = Math.ceil((north - s0) / dlat - 1e-9) + 1, nx = Math.ceil((east - w0) / dlon - 1e-9) + 1;
     const lats = [], lons = [];
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { lats.push(south + j * dlat); lons.push(west + i * dlon); }
-    S.spec = { south, north, west, east, zoom: z, nx, ny, dlat, dlon, lats, lons };
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { lats.push(s0 + j * dlat); lons.push(w0 + i * dlon); }
+    S.spec = { south: s0, north: s0 + (ny - 1) * dlat, west: w0, east: w0 + (nx - 1) * dlon, zoom: z, nx, ny, dlat, dlon, lats, lons };
     S.grid = null;
   }
   const spec = S.spec;
@@ -191,7 +204,7 @@ async function loadData(force = false) {
     setStatus(`${api.MODELS.find((m) => m.id === settings.model)?.short || settings.model} · ${spec.nx}×${spec.ny} puntos`);
   } catch (e) {
     setStatus(e.message);
-    if (e.rate && !S.retryTimer) {
+    if (e.rate && /minuto/.test(e.message) && !S.retryTimer) {
       S.retryTimer = setTimeout(() => { S.retryTimer = null; loadData(); }, 65000);
       toast(e.message + ' Reintento automático en 1 minuto.', 5000);
     }
@@ -243,6 +256,8 @@ function currentStyle() {
   if (isoMode === 'temp') style.iso = { var: spec.levels ? LEVELS[S.level].t : 'temperature_2m', step: 5, fmt: (v) => f.temp(v) };
   // Números sobre el mapa
   if (S.values && style.var) style.values = { var: style.var, fmt: UNITS[spec.unit].fmt };
+  // Ciudades con el valor de la capa (en radar/satélite solo el nombre)
+  if (S.cities) style.cities = style.var ? { var: style.var, fmt: UNITS[spec.unit].fmt } : { var: null };
   return style;
 }
 
@@ -254,6 +269,18 @@ function loadLand() {
   if (landLoaded) return;
   landLoaded = true;
   geoData('land').then((rings) => S.field.setLand(rings)).catch(() => { landLoaded = false; });
+}
+
+// Lugar elegido y favoritos, rotulados en el mapa con su valor
+function updatePlaces() {
+  const seen = new Set();
+  const list = [state.place, ...state.favorites].filter((p) => {
+    const k = p.lat.toFixed(2) + p.lon.toFixed(2);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).map((p) => ({ name: p.name.length > 22 ? p.name.slice(0, 21) + '…' : p.name, lat: p.lat, lon: p.lon }));
+  S.field?.setPlaces(list);
 }
 
 // ---------- Costas, fronteras y provincias por encima de los colores (como en Windy) ----------
@@ -352,24 +379,53 @@ function showRadarFrame() {
   });
 }
 
-// ---------- Satélite ----------
+// ---------- Satélite (animado: últimas 2 h cada 15 min) ----------
+function satTimes(n) {
+  // Meteosat publica cada 15 min con unos 20-30 min de retraso
+  const step = 15 * 60e3;
+  const last = Math.floor((Date.now() - 30 * 60e3) / step) * step;
+  return Array.from({ length: n }, (_, k) => last - (n - 1 - k) * step);
+}
 function showSat() {
-  if (S.satLayer) { S.map.removeLayer(S.satLayer); S.satLayer = null; }
+  (S.satFrames || []).forEach((fr) => S.map.removeLayer(fr.layer));
+  S.satFrames = [];
   const spec = LAYERS[S.layer];
   if (spec.kind !== 'sat' && !spec.sat) return;
   const s = spec.sat ? SATS.ir : SATS[S.sat];
   if (s.gibs) {
     const d = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    S.satLayer = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${d}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, {
-      maxNativeZoom: 9, maxZoom: 18, opacity: 0.9, zIndex: 300, attribution: 'NASA GIBS',
-    });
+    S.satFrames = [{
+      time: Date.parse(d + 'T12:00:00Z'),
+      layer: L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${d}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, {
+        maxNativeZoom: 9, maxZoom: 18, opacity: 0, zIndex: 300, attribution: 'NASA GIBS',
+      }),
+    }];
   } else {
-    S.satLayer = L.tileLayer.wms('https://view.eumetsat.int/geoserver/wms', {
-      layers: s.wms, format: 'image/png', transparent: true, version: '1.3.0', opacity: 0.85, zIndex: 300, attribution: 'EUMETSAT',
-    });
+    // Con radar + satélite basta la última imagen; solo con satélite se anima
+    S.satFrames = satTimes(spec.sat ? 1 : 9).map((t) => ({
+      time: t,
+      layer: L.tileLayer.wms('https://view.eumetsat.int/geoserver/wms', {
+        layers: s.wms, format: 'image/png', transparent: true, version: '1.3.0', opacity: 0, zIndex: 300, attribution: 'EUMETSAT',
+        time: new Date(t).toISOString().slice(0, 19) + 'Z',
+      }),
+    }));
   }
-  S.satLayer.addTo(S.map);
+  S.satIdx = S.satFrames.length - 1;
+  S.satFrames.forEach((fr) => fr.layer.addTo(S.map));
+  showSatFrame();
 }
+function showSatFrame() {
+  (S.satFrames || []).forEach((fr, i) => fr.layer.setOpacity(i === S.satIdx ? 0.88 : 0));
+}
+
+// Fotogramas observados (radar o satélite) que maneja la línea de tiempo; null si es una capa de modelo
+function obs() {
+  const kind = LAYERS[S.layer].kind;
+  if (kind === 'radar') return { times: S.radar.frames.map((fr) => fr.time * 1000), idx: S.radar.idx, set: (i) => { S.radar.idx = i; showRadarFrame(); } };
+  if (kind === 'sat') return { times: (S.satFrames || []).map((fr) => fr.time), idx: S.satIdx, set: (i) => { S.satIdx = i; showSatFrame(); } };
+  return null;
+}
+const hhmmLocal = (ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 // ---------- Leyenda (toca la unidad para cambiarla, como en Windy) ----------
 function niceTicks(min, max) {
@@ -403,13 +459,14 @@ function updateLegend() {
 const DAYS_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 function timeLabel() {
   const spec = LAYERS[S.layer];
-  if (spec.kind === 'radar') {
-    const fr = S.radar.frames[S.radar.idx];
-    if (!fr) return '—';
-    const mins = Math.round((Date.now() / 1000 - fr.time) / 60);
-    return `${f.localTimeFromUnix(fr.time)} · ${mins <= 0 ? 'ahora' : `hace ${mins} min`}`;
+  const o = obs();
+  if (o) {
+    const t = o.times[o.idx];
+    if (!t) return '—';
+    if (S.sat === 'modis' && spec.kind === 'sat') return 'Imagen de ayer (NASA MODIS)';
+    const mins = Math.round((Date.now() - t) / 60000);
+    return `${hhmmLocal(t)} · ${mins <= 2 ? 'ahora' : `hace ${mins} min`}`;
   }
-  if (spec.kind === 'sat') return 'Última imagen';
   const g = S.grid;
   if (!g) return '—';
   const d = new Date(g.times[S.t] + ':00Z');
@@ -447,10 +504,9 @@ function updateSlider() {
   if (!r) return;
   const spec = LAYERS[S.layer];
   el('mapDays').classList.toggle('hidden', !!spec.kind);
-  if (spec.kind === 'radar') {
-    r.min = 0; r.max = Math.max(0, S.radar.frames.length - 1); r.value = S.radar.idx; r.disabled = false;
-  } else if (spec.kind === 'sat') {
-    r.disabled = true;
+  const o = obs();
+  if (o) {
+    r.min = 0; r.max = Math.max(0, o.times.length - 1); r.value = o.idx; r.disabled = o.times.length < 2;
   } else if (S.grid) {
     r.disabled = false; r.min = S.t0; r.max = S.grid.nt - 1; r.value = S.t;
   }
@@ -460,7 +516,8 @@ function updateSlider() {
 }
 
 function setTime(i, frac = 0) {
-  if (LAYERS[S.layer].kind === 'radar') { S.radar.idx = i; showRadarFrame(); } else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) refreshPick(); }
+  const o = obs();
+  if (o) o.set(i); else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) refreshPick(); }
   const r = el('mapRange');
   if (r) r.value = i;
   el('mapTime').textContent = timeLabel();
@@ -473,20 +530,23 @@ function placeBubble() {
   const r = el('mapRange'), b = el('tlBubble');
   if (!r || !b) return;
   const spec = LAYERS[S.layer];
-  if (spec.kind === 'sat' || r.disabled) { b.classList.add('hidden'); return; }
+  if (r.disabled) { b.classList.add('hidden'); return; }
   b.classList.remove('hidden');
   const min = +r.min, max = +r.max;
   const pos = max > min ? (+r.value + (S.tf || 0) - min) / (max - min) : 0;
   const w = r.clientWidth - 16;
-  b.style.left = 8 + pos * w + 'px';
-  if (spec.kind === 'radar') {
-    const fr = S.radar.frames[S.radar.idx];
-    b.textContent = fr ? f.localTimeFromUnix(fr.time) : '';
+  b.dataset.pos = pos;
+  const o = obs();
+  if (o) {
+    b.textContent = o.times[o.idx] ? hhmmLocal(o.times[o.idx]) : '';
   } else if (S.grid) {
     const d = new Date(S.grid.times[S.t] + ':00Z');
     const mins = Math.round((S.tf || 0) * 60);
     b.textContent = `${DAYS_ES[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
   }
+  // Sin salirse por los lados
+  const half = b.offsetWidth / 2;
+  b.style.left = Math.max(half, Math.min(r.clientWidth - half, 8 + pos * w)) + 'px';
 }
 
 function togglePlay() {
@@ -499,7 +559,7 @@ function togglePlay() {
     return;
   }
   btn.innerHTML = ICON.pause;
-  const radar = LAYERS[S.layer].kind === 'radar';
+  const radar = !!obs();
   // Con modelo avanza en cuartos de hora interpolados para que la animación sea fluida
   S.playing = setInterval(() => {
     const r = el('mapRange');
@@ -538,8 +598,8 @@ function pickHtml(latlng) {
   }
   const u = s('f_surface_u'), w = s('f_surface_v');
   const dir = u !== null ? (Math.atan2(-u, -w) * 180 / Math.PI + 360) % 360 : null;
-  return `${main}<div class="pick-sub">${f.temp(s('temperature_2m'), true)} · ${f.arrow(dir)} ${f.wind(s('wind_speed_10m'), true)} · ${f.precip(s('precipitation'), true)}/h · ${f.pct(s('cloud_cover'))} nubes</div>
-    <div class="tiny">${timeLabel()} · ${latlng.lat.toFixed(2)}, ${latlng.lng.toFixed(2)}</div>`;
+  return `${main}<div class="pick-sub">${f.temp(s('temperature_2m'), true)} · ${f.arrow(dir)} ${f.wind(s('wind_speed_10m'), true)} · ${f.precip(s('precipitation'), true)}/h</div>
+    <button class="pick-more" data-detail>Pronóstico detallado ›</button>`;
 }
 function refreshPick() {
   if (!S.pick || !S.popup || !S.map.hasLayer(S.popup)) return;
@@ -548,7 +608,7 @@ function refreshPick() {
 function pickAt(latlng) {
   S.pick = latlng;
   const panelH = document.querySelector('.map-panel')?.offsetHeight || 200;
-  S.popup = L.popup({ maxWidth: 260, autoPan: true, autoPanPaddingTopLeft: [10, 110], autoPanPaddingBottomRight: [60, panelH + 16], className: 'pick-pop' }).setLatLng(latlng).setContent(pickHtml(latlng)).openOn(S.map);
+  S.popup = L.popup({ maxWidth: 260, autoPan: true, closeButton: false, autoPanPaddingTopLeft: [10, 110], autoPanPaddingBottomRight: [60, panelH + 16], className: 'pick-pop' }).setLatLng(latlng).setContent(pickHtml(latlng)).openOn(S.map);
   // El punto tocado pasa a ser el lugar seleccionado (como en Windy)
   S.marker.setLatLng(latlng);
   api.reverseGeocode(latlng.lat, latlng.lng).then((p) => {
@@ -595,12 +655,14 @@ async function renderForecastStrip() {
     box.innerHTML = `<div class="fc-head" id="fcHead">
         <span class="fc-now">${wxIcon(c.weather_code, c.is_day)}<b class="num">${f.temp(c.temperature_2m)}</b></span>
         <span class="fc-title"><b>${f.esc(p.name)}</b><span class="tiny">${wxDesc(c.weather_code)} · ${f.arrow(c.wind_direction_10m)} ${f.wind(c.wind_speed_10m, true)} · rachas ${f.wind(c.wind_gusts_10m)}</span></span>
-        <a href="#/horas" class="small">Detalle</a>
+        <button class="small fc-detail" id="fcDetail">Detalle</button>
         <button class="fc-toggle" id="fcToggle" aria-label="Plegar"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg></button>
       </div>
       <div class="fc-days">${days}</div>
       <div class="fc-strip" id="fcStrip">${cells}</div>`;
     box.querySelectorAll('.fc-cell').forEach((b) => { b.onclick = () => jumpToLocal(b.dataset.t); });
+    el('fcDetail').onclick = () => openDetail(el('view-map'));
+    box.querySelector('.fc-title').onclick = () => openDetail(el('view-map'));
     box.querySelectorAll('.fc-day').forEach((b) => { b.onclick = () => jumpToLocal(b.dataset.day + (b.dataset.day === c.time.slice(0, 10) ? c.time.slice(10, 13) + ':00' : 'T12:00')); });
     // Por defecto compacto (como Windy): días; al desplegar, también hora a hora
     el('fcToggle').onclick = () => {
@@ -717,7 +779,7 @@ function buildUI(root) {
 
   renderChips();
   buildLayerSheet();
-  el('mapSatSel').append(selectEl(Object.entries(SATS).map(([k, v]) => [k, v.label]), S.sat, (v) => { S.sat = v; showSat(); }));
+  el('mapSatSel').append(selectEl(Object.entries(SATS).map(([k, v]) => [k, v.label]), S.sat, (v) => { S.sat = v; stopPlay(); showSat(); updateSlider(); }));
   el('mapRange').addEventListener('input', (e) => setTime(+e.target.value));
   // Atajos: ← → hora anterior/siguiente, espacio reproducir
   document.addEventListener('keydown', (e) => {
@@ -759,7 +821,8 @@ function buildMenu() {
     <h3>Mapa base</h3>${radio('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}
     <h3>Horizonte</h3>${radio('days', [['2', '2 días'], ['3', '3 días'], ['5', '5 días'], ['7', '7 días'], ['10', '10 días']], String(S.days))}
     <h3>Isolíneas</h3>${radio('iso', ISO_MODES, S.iso)}
-    <h3>Líneas del mapa</h3><label><input type="checkbox" name="borders" ${S.borders ? 'checked' : ''}> Costas, fronteras y provincias</label>
+    <h3>Líneas y nombres</h3><label><input type="checkbox" name="borders" ${S.borders ? 'checked' : ''}> Costas, fronteras y provincias</label>
+    <label><input type="checkbox" name="cities" ${S.cities ? 'checked' : ''}> Ciudades con su valor</label>
     <h3>Resolución</h3>${radio('grid', [['low', 'Baja (menos datos)'], ['normal', 'Normal'], ['high', 'Alta (más peticiones)']], settings.mapGrid)}
     <p class="tiny" style="margin:8px 0 0">El mapa interpola una rejilla de puntos del modelo. Más resolución u horizonte = más detalle, pero consume más cuota gratuita (10.000 llamadas/día).</p>`;
   m.querySelector('#mapModelSel').append(selectEl(api.MODELS.map((x) => [x.id, x.name]), settings.model, (v) => {
@@ -772,6 +835,12 @@ function buildMenu() {
     if (name === 'days') { S.days = +value; loadData(true); }
     if (name === 'iso') { S.iso = value; save('map.iso', value); sideState(); prepareLayer(); }
     if (name === 'borders') { S.borders = e.target.checked; save('map.borders', S.borders); showBorders(); }
+    if (name === 'cities') {
+      S.cities = e.target.checked;
+      save('map.cities', S.cities);
+      if (S.labels) { if (S.cities) S.map.removeLayer(S.labels); else S.labels.addTo(S.map); }
+      prepareLayer();
+    }
   };
 }
 
@@ -783,7 +852,8 @@ function setBase() {
   const [url, attr, labels, maxNative] = BASES[settings.mapBase] || BASES.dark;
   S.base = L.tileLayer(url, { attribution: attr, maxZoom: 18, maxNativeZoom: maxNative, subdomains: 'abc' }).addTo(S.map);
   // Fronteras y nombres de ciudades por encima de los colores, como en Windy
-  S.labels = labels ? L.tileLayer(labels, { pane: 'labelsPane', maxZoom: 18, maxNativeZoom: maxNative }).addTo(S.map) : null;
+  S.labels = labels ? L.tileLayer(labels, { pane: 'labelsPane', maxZoom: 18, maxNativeZoom: maxNative }) : null;
+  if (S.labels && !S.cities) S.labels.addTo(S.map);
 }
 
 export default {
@@ -810,6 +880,9 @@ export default {
       S.field = new FieldLayer(map);
       showBorders();
       map.on('zoomend', toggleRegions);
+      geoData('cities').then((c) => S.field.setCities(c)).catch(() => {});
+      updatePlaces();
+      on('favorites', updatePlaces);
       S.marker = L.marker([state.place.lat, state.place.lon], { icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16, 16] }) }).addTo(map);
       map.on('moveend', loadDebounced);
       map.on('moveend', () => save('map.view', [map.getCenter().lat, map.getCenter().lng, map.getZoom()]));
@@ -822,11 +895,18 @@ export default {
         clickTimer = setTimeout(() => pickAt(e.latlng), 280);
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
+      map.getContainer().addEventListener('click', (e) => {
+        if (e.target.closest('[data-detail]')) { e.stopPropagation(); S.map.closePopup(); openDetail(el('view-map')); }
+      }, true);
       map.whenReady(() => { S.field.redraw(); loadData(true); });
       renderForecastStrip();
       loadRadar();
       applyLayer();
-      setInterval(() => { if (LAYERS[S.layer].kind === 'radar') loadRadar(); }, 5 * 60e3);
+      setInterval(() => {
+        if (S.playing) return;
+        if (LAYERS[S.layer].kind === 'radar') loadRadar();
+        if (LAYERS[S.layer].kind === 'sat' || LAYERS[S.layer].sat) { showSat(); updateSlider(); }
+      }, 5 * 60e3);
       return;
     }
     // Re-render por cambio de lugar o de ajustes
@@ -842,6 +922,8 @@ export default {
     S.keepView = false;
     buildMenu();
     renderForecastStrip();
+    if (detailOpen()) openDetail(root);
+    updatePlaces();
     prepareLayer();
     loadData(modelChanged || settings.mapGrid !== S.gridRes);
     S.gridRes = settings.mapGrid;
@@ -853,6 +935,7 @@ export default {
   },
   hide() {
     stopPlay();
+    closeDetail();
     S.field?.stop();
   },
 };

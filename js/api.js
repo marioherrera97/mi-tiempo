@@ -2,17 +2,41 @@
 import { load, save } from './state.js';
 
 const mem = new Map();
-export const clearCache = () => mem.clear();
+// Al pulsar "Actualizar" se ignoran los datos guardados anteriores a este momento
+let freshAfter = 0;
+export const clearCache = () => { mem.clear(); freshAfter = Date.now(); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Copia persistente de las respuestas (Cache API): al reabrir la app no se repiten descargas
+// y, si la API falla o se agota la cuota gratuita, se muestran los últimos datos guardados.
+const STORE = 'mitiempo-api-v1';
+const MAX_STORED = 80;
+async function storeGet(url) {
+  try {
+    const r = await (await caches.open(STORE)).match(url);
+    return r ? { t: +r.headers.get('x-time'), d: await r.json() } : null;
+  } catch { return null; }
+}
+async function storePut(url, data, t) {
+  try {
+    const c = await caches.open(STORE);
+    await c.put(url, new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json', 'x-time': String(t) } }));
+    const keys = await c.keys();
+    for (let i = 0; i < keys.length - MAX_STORED; i++) await c.delete(keys[i]);
+  } catch { /* sin Cache API (navegación privada) */ }
+}
 
 export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
   const now = Date.now();
-  const hit = mem.get(url);
-  if (hit && now - hit.t < ttl) return hit.d;
+  let hit = mem.get(url);
+  if (hit && now - hit.t < ttl && hit.t >= freshAfter) return hit.d;
   if (persist) {
     const p = load('cache:' + url, null);
     if (p && now - p.t < ttl) { mem.set(url, p); return p.d; }
   }
+  const stored = hit ? null : await storeGet(url);
+  if (stored && now - stored.t < ttl && stored.t >= freshAfter) { mem.set(url, stored); return stored.d; }
+  hit ||= stored;
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -37,6 +61,7 @@ export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
         throw err;
       }
       mem.set(url, { t: now, d: data });
+      storePut(url, data, now);
       if (persist) save('cache:' + url, { t: now, d: data });
       return data;
     } catch (e) {
@@ -45,7 +70,7 @@ export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
       await sleep(700 * (attempt + 1));
     }
   }
-  if (hit) return hit.d; // mejor datos viejos que nada
+  if (hit) return hit.d; // mejor datos viejos que nada (sin red o sin cuota)
   throw lastErr;
 }
 

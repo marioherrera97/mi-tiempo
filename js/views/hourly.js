@@ -4,7 +4,7 @@ import { getForecast } from '../data.js';
 import { MODELS } from '../api.js';
 import * as f from '../format.js';
 import { wxIcon } from '../icons.js';
-import { css } from '../colors.js';
+import { css, textOn } from '../colors.js';
 import { loading, errorBox, chips, selectEl, segmented } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { nowIndex } from './home.js';
@@ -67,7 +67,8 @@ function buildRows(d, idx) {
 
 function colored(scale, v, text, translucent = false) {
   if (!f.isNum(v)) return { t: '–' };
-  return { t: text, cls: 'cval', style: `background:${css(scale, v, translucent ? 1.3 : 0.9)}` };
+  const mul = translucent ? 1.3 : 0.9;
+  return { t: text, cls: 'cval', style: `background:${css(scale, v, mul)};color:${textOn(scale, v, mul)}` };
 }
 function cloud(v) {
   if (!f.isNum(v)) return { t: '–' };

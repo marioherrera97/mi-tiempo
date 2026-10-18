@@ -364,7 +364,9 @@ table.simple .r { text-align: right; }
 .ls-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
 .ls-item { padding: 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); text-align: left; font-size: 13.5px; font-weight: 550; }
 .ls-item.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.pick-pop .leaflet-popup-content { margin: 10px 12px; min-width: 170px; }
+.pick-pop .leaflet-popup-content { margin: 8px 12px 10px; min-width: 160px; }
+.pick-pop .leaflet-popup-content-wrapper { border-radius: 14px; border: 1px solid var(--line); }
+.pick-more { display: block; margin-top: 6px; color: var(--accent); font-weight: 650; font-size: 12.5px; }
 .pick-main { display: flex; align-items: baseline; gap: 4px; font-size: 13px; color: var(--text-2); }
 .pick-main b { font-size: 24px; color: var(--text); font-weight: 650; }
 .pick-main .arrow { width: 16px; height: 16px; align-self: center; }
@@ -430,6 +432,29 @@ table.simple .r { text-align: right; }
 .fc-cell .fr { color: var(--rain); font-size: 10px; min-height: 12px; }
 .fc-cell .fw { color: var(--text-2); font-size: 10px; display: flex; align-items: center; gap: 1px; }
 .fc-cell .arrow { width: 9px; height: 9px; }
+
+/* Panel de detalle del punto (como en Windy) */
+.detail-sheet {
+  position: absolute; z-index: 1200; left: 0; right: 0; bottom: 0; height: min(64%, 560px);
+  background: var(--bg-2); border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; transform: translateY(105%); transition: transform .22s ease-out; max-width: 980px; margin: 0 auto;
+}
+.detail-sheet.open { transform: none; }
+.dt-head { display: flex; align-items: center; gap: 10px; padding: 10px 10px 4px 14px; }
+.dt-title { flex: 1; min-width: 0; line-height: 1.25; }
+.dt-title b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-title .tiny { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-tabs { display: flex; align-items: center; gap: 8px; padding: 4px 10px 8px; }
+.dt-tabs .chips { flex: 1; }
+.dt-step button { padding: 4px 8px; font-size: 12px; }
+.dt-body { flex: 1; overflow: auto; padding: 0 8px 10px; }
+.detail-table { border-radius: 12px; }
+.detail-table .wtable td { min-width: 38px; }
+.detail-table .wtable tr.r-day td span { left: 78px; }
+.detail-table .wtable th.rowlab { min-width: 72px; font-size: 11px; }
+.detail-table .arrow { width: 11px; height: 11px; vertical-align: -1px; }
+.fc-detail { color: var(--accent); font-weight: 600; padding: 4px 2px; }
+.fc-title { cursor: pointer; }
 
 /* ===== Misc ===== */
 .loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 0; color: var(--text-2); }

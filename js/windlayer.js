@@ -253,10 +253,68 @@ export class FieldLayer {
     if (!geo) return;
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
-    const g = this.grid;
-    if (!g) return;
+    const g = this.grid || { vars: {} };
     if (this.style.iso && g.vars[this.style.iso.var]) this._isolines(ctx, this.style.iso);
+    if (this.style.cities && this.cities) this._cityLabels(ctx);
     if (this.style.values && g.vars[this.style.values.var]) this._values(ctx, this.style.values);
+  }
+
+  // ---------- Ciudades con el valor de la capa (como en Windy) ----------
+  // cities: [[nombre, lat, lon, minZoom], ...] ordenadas por importancia; extra: lugares propios (favoritos)
+  setCities(cities) { this.cities = cities; this.drawIso(); }
+  setPlaces(places) { this.places = places || []; this.drawIso(); }
+
+  _cityLabels(ctx) {
+    const geo = this.geo;
+    const z = this.map.getZoom();
+    const cfg = this.style.cities;
+    const boxes = [];
+    const fits = (x, y, w, h) => {
+      if (x < 4 || y < 4 || x + w > geo.w - 4 || y + h > geo.h - 4) return false;
+      for (const b of boxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false;
+      boxes.push([x, y, w, h]);
+      return true;
+    };
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineJoin = 'round';
+    const draw = (name, lat, lon, mine) => {
+      const [x, y0] = this._toCanvas(lat, lon);
+      const y = mine ? y0 + 26 : y0; // los lugares propios, debajo del marcador
+      if (x < 0 || y < 0 || x > geo.w || y > geo.h) return false;
+      let val = '';
+      if (cfg.var && this.grid?.vars[cfg.var]) {
+        const v = this.sample(cfg.var, lat, lon);
+        if (v !== null && !(this.style.mask && this.landAlpha?.[((y | 0) * geo.w + (x | 0)) * 4 + 3])) val = cfg.fmt(v) || '';
+      }
+      ctx.font = `${mine ? 700 : 600} 11.5px system-ui, sans-serif`;
+      const wName = ctx.measureText(name).width;
+      ctx.font = '800 14px system-ui, sans-serif';
+      const wVal = val ? ctx.measureText(val).width : 0;
+      const w = Math.max(wName, wVal) + 6, h = val ? 32 : 17;
+      if (!fits(x - w / 2, y - 14, w, h)) return false;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.font = `${mine ? 700 : 600} 11.5px system-ui, sans-serif`;
+      ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.92)';
+      ctx.strokeText(name, x, y);
+      ctx.fillText(name, x, y);
+      if (val) {
+        ctx.font = '800 14px system-ui, sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.strokeText(val, x, y + 15);
+        ctx.fillText(val, x, y + 15);
+      }
+      return true;
+    };
+    // Primero los lugares propios (lugar elegido y favoritos), luego las ciudades por tamaño
+    for (const p of this.places || []) draw(p.name, p.lat, p.lon, true);
+    const b = this.bounds;
+    let n = 0;
+    for (const c of this.cities) {
+      if (c[3] > z + 1.6 || !b.contains([c[1], c[2]])) continue;
+      if (draw(c[0], c[1], c[2], false) && ++n >= 120) break;
+    }
   }
 
   _isolines(ctx, iso) {

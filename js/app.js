@@ -157,7 +157,7 @@ function init() {
     // Cuando se publica una versión nueva, el service worker se activa y la app se recarga sola
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
-    navigator.serviceWorker.register('sw.js').then((reg) => reg.update()).catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => reg.update()).catch(() => {});
   }
 }
 

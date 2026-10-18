@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -16,7 +16,8 @@ const SHELL_FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' evita guardar copias viejas de la caché HTTP del navegador
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

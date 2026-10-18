@@ -161,6 +161,15 @@ export class FieldLayer {
     this.bounds = L.latLngBounds(map.containerPointToLatLng([-ox, h - oy]), map.containerPointToLatLng([w - ox, -oy]));
     this._buildMask();
   }
+  // Rótulo de ciudad bajo un punto de la pantalla (coordenadas del contenedor del mapa)
+  labelAt(pt) {
+    for (const r of this.hits || []) {
+      const p = this.map.latLngToContainerPoint([r.lat, r.lon]);
+      const x = pt.x - p.x - r.dx, y = pt.y - p.y - r.dy;
+      if (x >= -4 && x <= r.w + 4 && y >= -4 && y <= r.h + 4) return r;
+    }
+    return null;
+  }
   // Coordenadas en el lienzo de un punto geográfico
   _toCanvas(lat, lon) {
     const p = this.map.latLngToContainerPoint([lat, lon]);
@@ -285,6 +294,7 @@ export class FieldLayer {
 
   _cityLabels(ctx) {
     const geo = this.geo;
+    this.hits = [];
     const z = this.map.getZoom();
     const cfg = this.style.cities;
     const boxes = this.cityBoxes;
@@ -327,6 +337,8 @@ export class FieldLayer {
       const wVal = val ? ctx.measureText(val).width : 0;
       const w = Math.max(wName, wVal) + 8, h = val ? 29 : 16;
       if (!fits(x - w / 2, y - 12, w, h)) return false;
+      // Zona del rótulo respecto a su punto, para poder tocarlo
+      this.hits.push({ name, lat, lon, mine, dx: -w / 2, dy: y - y0 - 12, w, h });
       ctx.font = FONT_NAME(mine);
       ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.95)';
       soft(name, x, y);

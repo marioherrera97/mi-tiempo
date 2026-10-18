@@ -29,6 +29,17 @@ const BAR_IC = {
 };
 const DIAS = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
 
+// Colores de la fila de rachas de la tabla de Windy (más vivos que los del mapa)
+const GUST = [[0, [255, 255, 255]], [5, [222, 246, 251]], [10, [160, 233, 244]], [15, [52, 218, 238]], [19, [34, 224, 180]], [22, [43, 220, 53]], [30, [95, 211, 26]], [40, [232, 229, 26]], [55, [245, 163, 26]], [70, [239, 59, 44]], [90, [194, 24, 91]]];
+function gustCell(kmh) {
+  if (!f.isNum(kmh)) return cell('–');
+  let k = 1;
+  while (k < GUST.length - 1 && GUST[k][0] < kmh) k++;
+  const [a, ca] = GUST[k - 1], [b, cb] = GUST[k];
+  const t = Math.max(0, Math.min(1, (kmh - a) / (b - a)));
+  const c = ca.map((v, i) => Math.round(v + (cb[i] - v) * t));
+  return cell(f.wind(kmh), `background:rgb(${c.join(',')});color:${kmh >= 70 ? '#fff' : '#111'}`, 'gust');
+}
 const cell = (txt, style = '', cls = '') => `<td${cls ? ` class="${cls}"` : ''}${style ? ` style="${style}"` : ''}>${txt}</td>`;
 const colored = (scale, v, txt, mul = 1) => (f.isNum(v) ? cell(txt, `background:${css(scale, v, mul)};color:${textOn(scale, v, mul)}`, 'cval') : cell('–'));
 
@@ -36,7 +47,9 @@ function hourIdx(times, nowKey, step, maxH) {
   let i0 = times.findIndex((t) => t.slice(0, 13) >= nowKey);
   if (i0 < 0) i0 = 0;
   // Con paso de 3 h, alinear a 2, 5, 8… como Windy
-  if (step === 3) while (i0 > 0 && (+times[i0].slice(11, 13) + 1) % 3 !== 0) i0--;
+  // (desde el principio del día se alinea hacia delante, para no empezar con la víspera)
+  if (step === 3 && nowKey.endsWith('T00')) while (i0 < times.length - 1 && (+times[i0].slice(11, 13) + 1) % 3 !== 0) i0++;
+  else if (step === 3) while (i0 > 0 && (+times[i0].slice(11, 13) + 1) % 3 !== 0) i0--;
   const out = [];
   for (let i = i0; i < Math.min(times.length, i0 + maxH); i += step) out.push(i);
   return out;
@@ -90,6 +103,25 @@ function summary(d) {
     <div class="wd-rainrow" style="--n:${n}"><span class="wd-drops">💧</span><div class="wd-rain">${rain}<b class="wd-win"></b></div></div>`;
 }
 
+// ---------- Acerca de la ubicación (columna derecha en pantallas grandes) ----------
+function about(d) {
+  const dms = (v, pos, neg) => {
+    const a = Math.abs(v), g = Math.floor(a), m = Math.floor((a - g) * 60), s = Math.round(((a - g) * 60 - m) * 60);
+    return `${v >= 0 ? pos : neg}${g}°${m}'${s}"`;
+  };
+  const off = (d.utc_offset_seconds || 0) / 3600;
+  const ti = Math.max(0, d.daily.time.indexOf(d.current.time.slice(0, 10)));
+  const hm = (t) => (t ? t.slice(11, 16) : '–');
+  const rows = [
+    `${dms(state.place.lat, 'N', 'S')}, ${dms(state.place.lon, 'E', 'W')}`,
+    `${d.timezone || ''} (${off >= 0 ? '+' : '−'}${String(Math.abs(off)).padStart(2, '0')}:00)`,
+    `Amanecer: ${hm(d.daily.sunrise?.[ti])}`,
+    `Atardecer: ${hm(d.daily.sunset?.[ti])}`,
+  ];
+  if (f.isNum(d.elevation)) rows.push(`Elevación del modelo: ${Math.round(d.elevation)} m`);
+  return `<h4>Acerca de la ubicación</h4>${rows.map((r) => `<p>${r}</p>`).join('')}`;
+}
+
 // ---------- Vistas ----------
 async function basic(body, d) {
   const h = d.hourly;
@@ -110,14 +142,37 @@ async function basic(body, d) {
     for (let k = i; k < i + view.step && k < h.time.length; k++) sum += h.precipitation[k] || 0;
     return cell(sum >= 0.1 ? f.precip(sum) : '', '', 'rainv');
   })}
-    ${R(`Viento <small>${f.windUnit()}</small>`, (i) => colored('wind', h.wind_speed_10m[i], f.wind(h.wind_speed_10m[i])))}
-    ${R(`Rachas <small>${f.windUnit()}</small>`, (i) => colored('wind', h.wind_gusts_10m[i], f.wind(h.wind_gusts_10m[i])))}
+    ${R(`Viento <small>${f.windUnit()}</small>`, (i) => cell(f.wind(h.wind_speed_10m[i])))}
+    ${R(`Rachas <small>${f.windUnit()}</small>`, (i) => gustCell(h.wind_gusts_10m[i])).replace('<tr>', '<tr class="r-gust">')}
     ${R('Dirección', (i) => cell(f.arrow(h.wind_direction_10m[i])))}
     ${R('Nubes <small>%</small>', (i) => cell(f.isNum(h.cloud_cover[i]) ? Math.round(h.cloud_cover[i]) : '–', '', 'soft'))}
     ${R('Prob. lluvia', (i) => cell(f.isNum(h.precipitation_probability[i]) && h.precipitation_probability[i] >= 5 ? h.precipitation_probability[i] + '%' : '', '', 'rainv'))}
   </table></div>`;
   drawCurve(body, idx.map((i) => h.temperature_2m[i]));
   scrollToNow(body);
+  // Instante (UTC) de cada columna: tocar una lleva el mapa a esa hora
+  const off = (d.utc_offset_seconds || 0) * 1000;
+  sheet.colMs = idx.map((i) => Date.parse(h.time[i] + ':00Z') - off);
+  sheet.colSpan = view.step * 3600e3;
+  body.querySelector('table').addEventListener('click', (e) => {
+    const td = e.target.closest('td');
+    if (!td || td.parentElement.classList.contains('r-day')) return;
+    const j = td.cellIndex - 1;
+    if (j >= 0 && sheet.colMs[j]) window.dispatchEvent(new CustomEvent('wd-pick-time', { detail: sheet.colMs[j] }));
+  });
+  markMapTime();
+}
+
+// Línea roja discontinua en la columna de la hora que muestra el mapa
+let mapMs = null;
+window.addEventListener('map-time', (e) => { mapMs = e.detail; markMapTime(); });
+function markMapTime() {
+  const wrap = sheet?.querySelector('.wd-table');
+  if (!wrap || !sheet.colMs || mapMs === null) return;
+  const j = sheet.colMs.findIndex((t) => mapMs >= t && mapMs < t + sheet.colSpan);
+  wrap.querySelectorAll('.mapcol').forEach((c) => c.classList.remove('mapcol'));
+  if (j < 0) return;
+  wrap.querySelectorAll('tr:not(.r-day)').forEach((tr) => tr.cells[j + 1]?.classList.add('mapcol'));
 }
 
 // Silueta rosada de la temperatura por detrás de las horas, iconos y temperaturas (como Windy)
@@ -365,10 +420,12 @@ async function renderAll() {
   body.classList.remove('dark');
   sheet.classList.toggle('tall', view.tab === 'models');
   sheet.querySelector('[data-view]').value = view.tab;
+  sheet.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === view.tab));
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
   try {
     const d = await getForecast();
     top.innerHTML = summary(d);
+    sheet.querySelector('.wd-about').innerHTML = about(d);
     const ti = Math.max(0, d.daily.time.indexOf(d.current.time.slice(0, 10)));
     sheet.days = d.daily.time.slice(ti, ti + 16);
     sheet.querySelector('.wd-srcwrap').innerHTML = d.source === 'met' ? '<p class="wd-src">Datos de MET Noruega (respaldo: Open-Meteo no disponible ahora)</p>' : '';
@@ -403,8 +460,9 @@ export function openDetail(root) {
     <button class="w-close wd-close" data-close aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.4L17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
     <div class="wd-head"><div class="wd-top"></div><a class="wd-15" href="#/inicio">Pronóstico de 15 días ›</a><button class="wd-cmp" data-cmp>Comparar ›</button></div>
     <div class="wd-srcwrap"></div>
-    <div class="wd-body"></div>
+    <div class="wd-main"><div class="wd-body"></div><a class="wd-15v" href="#/inicio">Pronóstico de 15 días ›</a><aside class="wd-about"></aside></div>
     <div class="wd-bar">
+      <div class="wd-tabs">${VIEWS.map(([v, l]) => `<button data-tab="${v}">${l}</button>`).join('')}</div>
       <label>${BAR_IC.clock}<span>pronóstico</span><select data-step>${[[1, '1 hora'], [3, '3 horas']].map(([v, l]) => `<option value="${v}" ${v === view.step ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>${BAR_IC.eye}<span>Mostrar como:</span><select data-view>${VIEWS.map(([v, l]) => `<option value="${v}" ${v === view.tab ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>${BAR_IC.layers}<span>Fuente:</span><select data-model>${api.MODELS.map((m) => `<option value="${m.id}" ${m.id === settings.model ? 'selected' : ''}>${m.short}</option>`).join('')}</select></label>
@@ -414,6 +472,7 @@ export function openDetail(root) {
   sheet.querySelector('[data-close]').onclick = closeDetail;
   sheet.querySelector('[data-step]').onchange = (e) => { view.step = +e.target.value; renderAll(); };
   sheet.querySelector('[data-view]').onchange = (e) => { view.tab = e.target.value; renderAll(); };
+  sheet.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { view.tab = b.dataset.tab; renderAll(); }; });
   sheet.querySelector('[data-cmp]').onclick = () => { view.tab = view.tab === 'models' ? 'basic' : 'models'; renderAll(); };
   // Cambiar la fuente cambia el modelo de toda la app (y vuelve a abrir este panel)
   sheet.querySelector('[data-model]').onchange = (e) => { settings.model = e.target.value; saveSettings(); };

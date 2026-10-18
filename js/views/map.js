@@ -512,6 +512,7 @@ function applyLayer() {
   styleBorders();
   styleWater();
   buildMenu();
+  buildQuick();
   prepareLayer();
   loadData();
 }
@@ -648,6 +649,16 @@ function thumb(k) {
   if (url) bg = `center / cover url(${url})`;
   return `<span class="w-thumb" data-th="${k}" style="background:${bg}">${SVG(IC[LAYER_ICON[k]] || IC.wind)}</span>`;
 }
+// Lista de capas a la derecha en pantallas grandes (como la de Windy): nombre y miniatura redonda
+const QUICK = ['radar', 'sat', 'wind', 'rain', 'temp', 'clouds', 'waves', 'rainacc', 'cape', 'gust', 'pressure'];
+function buildQuick() {
+  const box = el('wQuick');
+  if (!box) return;
+  box.innerHTML = QUICK.filter((k) => LAYERS[k]).map((k) => `<button class="${k === S.layer ? 'on' : ''}" data-layer="${k}"><span>${LAYERS[k].short || LAYERS[k].label}</span>${thumb(k)}</button>`).join('');
+  box.querySelectorAll('[data-layer]').forEach((b) => { b.onclick = () => selectLayer(b.dataset.layer); });
+  if (getComputedStyle(box).display !== 'none') loadThumbs();
+}
+
 // Las miniaturas tipo mapa se generan la primera vez que se abre el menú (hacen falta las costas)
 let thumbsBusy = false;
 function loadThumbs() {
@@ -825,6 +836,7 @@ function placeBubble(scroll = true) {
   const ms = timeMs(g, t) + (S.tf && t + 1 < g.nt ? S.tf * (timeMs(g, t + 1) - timeMs(g, t)) : 0);
   const d = new Date(Math.round(ms / 900e3) * 900e3);
   b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  window.dispatchEvent(new CustomEvent('map-time', { detail: ms }));
   // La marca queda en el centro; se mueve la tira
   line.style.left = W / 2 + 'px';
   b.style.left = W / 2 + 'px';
@@ -980,6 +992,12 @@ function pickAt(latlng) {
     setPlace(p);
   });
 }
+function openPlace(hit) {
+  // El lugar ya elegido: solo se abre su pronóstico
+  if (Math.abs(hit.lat - state.place.lat) < 1e-4 && Math.abs(hit.lon - state.place.lon) < 1e-4) { closePicker(); openDetail(el('view-map')); return; }
+  const go = (extra) => setPlace({ ...extra, name: hit.name, lat: hit.lat, lon: hit.lon });
+  api.reverseGeocode(hit.lat, hit.lon).then(go).catch(() => go({}));
+}
 function closePicker() {
   S.pick = null;
   S.marker.getElement()?.querySelector('.pin-val')?.classList.add('hidden');
@@ -1116,6 +1134,7 @@ function buildUI(root) {
       <button id="mapSearch" title="Buscar">${SVG(IC.search)}</button>
     </div>
     <button class="w-menu-btn" id="wMenuBtn" aria-label="Menú y capas">${SVG(IC.menu)}</button>
+    <div class="w-quick" id="wQuick"></div>
     <div class="w-shade" id="wMenuShade"></div>
     <aside class="w-menu" id="wMenu"></aside>
     <div class="w-bottom" id="wBottom">
@@ -1148,6 +1167,13 @@ function buildUI(root) {
     }
   });
   window.addEventListener('resize', () => { buildDays(); placeBubble(); });
+  // Tocar una columna del panel del punto lleva el mapa a esa hora (como Windy)
+  window.addEventListener('wd-pick-time', (e) => {
+    if (!S.grid || obs()) return;
+    stopPlay();
+    setTime(Math.max(S.t0, nearestIndex(S.grid, e.detail)));
+    updatePicker();
+  });
   // Tira de días: se arrastra con el dedo, con el ratón o con la rueda
   const strip = el('wStrip');
   strip.addEventListener('scroll', onStripScroll, { passive: true });
@@ -1206,7 +1232,7 @@ export default {
     if (!S.map) {
       buildUI(root);
       const view = load('map.view', null);
-      const map = L.map('map', { zoomControl: true, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
+      const map = L.map('map', { zoomControl: false, worldCopyJump: false, minZoom: 2, maxBounds: [[-85, -200], [85, 200]] })
         .setView(view ? [view[0], view[1]] : [state.place.lat, state.place.lon], view ? view[2] : 6);
       S.map = map;
       map.createPane('labelsPane').style.zIndex = 380;
@@ -1235,7 +1261,7 @@ export default {
       // Los nombres de ciudades no se ponen debajo de los botones ni de las barras
       const avoidUI = () => {
         const m = map.getContainer().getBoundingClientRect();
-        S.field.avoid = [...root.querySelectorAll('.w-top, .w-side button, .w-menu-btn, .w-bottom')]
+        S.field.avoid = [...root.querySelectorAll('.w-top, .w-side button, .w-menu-btn, .w-quick button, .w-bottom')]
           .map((b) => b.getBoundingClientRect()).filter((r) => r.width)
           .map((r) => [r.left - m.left - 4, r.top - m.top - 4, r.width + 8, r.height + 8]);
         S.field.drawIso();
@@ -1265,7 +1291,13 @@ export default {
       let clickTimer = null;
       map.on('click', (e) => {
         clearTimeout(clickTimer);
-        clickTimer = setTimeout(() => pickAt(e.latlng), 280);
+        // Tocar el nombre de una localidad abre su pronóstico
+        const hit = S.cities ? S.field.labelAt(e.containerPoint) : null;
+        clickTimer = setTimeout(() => (hit ? openPlace(hit) : pickAt(e.latlng)), 280);
+      });
+      // Manita sobre los nombres, para que se vea que se pueden tocar
+      map.on('mousemove', (e) => {
+        map.getContainer().style.cursor = S.cities && S.field.labelAt(e.containerPoint) ? 'pointer' : '';
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
       map.whenReady(() => { S.field.redraw(); loadData(true); });

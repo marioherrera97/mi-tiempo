@@ -228,3 +228,67 @@ body.map-mode { background: #2b2b2b; }
 .wn-days b { font-size: 12.5px; font-weight: 700; }
 .wn-rain { position: relative; height: 9px; margin-top: 3px; border-radius: 5px; background: #fff; overflow: hidden; }
 .wn-rain i { position: absolute; top: 0; bottom: 0; min-width: 3px; background: #22c3e6; filter: blur(1.5px); }
+
+/* Tabla del punto más compacta, como la de Windy */
+.wd-table td { min-width: 34px; }
+.wd-table td.big { font-size: 14.5px; }
+.wd-table tr.r-gust td { height: 20px; font-size: 11.5px; }
+.wd-table td.mapcol { background-image: linear-gradient(#e0484f, #e0484f); background-size: 1.5px 100%; background-repeat: no-repeat; background-position: 0 0; }
+.wd-table table { cursor: pointer; }
+.wd-main { display: contents; }
+.wd-15v, .wd-about, .wd-tabs { display: none; }
+.w-quick { display: none; }
+
+/* ---------- Pantallas grandes: disposición de Windy en el ordenador ---------- */
+@media (min-width: 900px) {
+  /* Buscador blanco flotante arriba a la izquierda, con la tarjeta debajo */
+  .w-top { left: 12px; top: 12px; right: auto; width: 470px; background: none; }
+  .w-search { height: 46px; padding: 0; gap: 4px; }
+  .w-sb-main { height: 44px; padding: 0 18px; background: #fff; color: #333; border: 0; border-radius: 23px; font-size: 19px; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+  .w-sb-main svg { fill: #777; }
+  .w-sb-ico svg { filter: drop-shadow(0 0 2px rgba(0,0,0,.8)) drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+  .w-now { margin-top: 8px; padding: 8px 10px; height: auto; background: rgba(77,77,77,.96); border-radius: 12px; box-shadow: 0 3px 12px rgba(0,0,0,.35); }
+  .w-picker { margin-top: 8px; background: rgba(52,52,52,.96); border-radius: 12px; box-shadow: 0 3px 12px rgba(0,0,0,.35); }
+  .w-top .w-status { left: 0; right: auto; }
+
+  /* Botón «Menú» arriba a la derecha y lista de capas debajo */
+  .w-menu-btn { top: calc(12px + var(--safe-t)); bottom: auto; right: 14px; width: 54px; height: 54px; }
+  .w-menu-btn svg { width: 30px; height: 30px; }
+  .w-menu-btn::before { content: 'Menú'; position: absolute; right: 30px; top: 50%; transform: translateY(-50%); z-index: -1; padding: 7px 38px 7px 16px; border-radius: 20px; background: rgba(60,60,60,.85); color: #fff; font-size: 21px; white-space: nowrap; }
+  .w-quick { position: absolute; z-index: 900; top: calc(80px + var(--safe-t)); right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .w-quick button { display: flex; align-items: center; gap: 8px; color: #fff; font-size: 15px; text-shadow: 0 0 3px #000, 0 0 6px rgba(0,0,0,.7); }
+  .w-quick button span:first-child { padding: 3px 0; }
+  .w-quick .w-thumb { width: 34px; height: 34px; aspect-ratio: auto; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .w-quick .w-thumb svg { width: 18px; height: 18px; }
+  .w-quick button.on { color: #ffc62e; }
+  .w-quick button.on .w-thumb { border-color: #ffc62e; box-shadow: 0 0 0 2px #ffc62e; }
+  .w-side { flex-direction: row; bottom: calc(var(--w-bottom-h) + var(--safe-b) + 10px); right: 12px; gap: 2px; padding: 0 6px; border-radius: 22px; background: rgba(40,40,40,.55); }
+
+  /* Panel del punto a todo lo ancho; oculta la línea de tiempo del mapa */
+  .wdetail { max-width: none; max-height: min(52%, 440px); background: #fff; }
+  .wdetail.tall { max-height: 88%; }
+  .view-map.detail-open .w-bottom { display: none; }
+  .wd-head { display: none; }
+  .wd-close { left: 14px; right: auto; top: 10px; width: 40px; height: 40px; }
+  .wd-close svg { width: 26px; height: 26px; }
+  .wd-main { display: flex; flex: 0 1 auto; min-height: 0; }
+  .wd-body { flex: 1; min-width: 0; }
+  .wd-15v { display: block; flex: none; align-self: flex-start; writing-mode: vertical-rl; transform: rotate(180deg); margin: 34px 0 0; padding: 12px 5px; background: var(--w-red); color: #fff; font-size: 12.5px; border-radius: 0 8px 8px 0; white-space: nowrap; }
+  .wd-about { display: block; flex: none; width: 230px; padding: 12px 14px; overflow: auto; color: #555; font-size: 13.5px; line-height: 1.45; border-left: 1px solid #eee; }
+  .wd-about h4 { margin: 0 0 6px; font-size: 16px; font-weight: 400; color: #333; }
+  .wd-about p { margin: 0 0 5px; }
+  .wd-table th.rowlab { min-width: 118px; font-size: 11.5px; }
+  .wd-table td { min-width: 37px; height: 24px; font-size: 12.5px; }
+  .wd-table tr.r-hour td { font-size: 13px; }
+  .wd-table tr.r-day td { font-size: 14px; letter-spacing: 0; }
+  .wd-table td.big { font-size: 15px; }
+  /* Barra roja: pestañas en vez de desplegables */
+  .wd-bar { align-items: center; gap: 4px; padding: 6px 10px; }
+  .wd-bar label { flex: none; }
+  .wd-bar label:nth-of-type(2) { display: none; }
+  .wd-tabs { display: flex; gap: 4px; order: 1; flex: 1; }
+  .wd-bar label:nth-of-type(3) { order: 2; }
+  .wd-tabs button { padding: 6px 14px; border-radius: 16px; color: #fff; font-size: 15px; }
+  .wd-tabs button.on { background: rgba(255,255,255,.22); }
+  .wd-tabs button:hover { background: rgba(255,255,255,.12); }
+}

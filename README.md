@@ -81,6 +81,7 @@ Todas son públicas y gratuitas para uso personal (no comercial):
 - [MET Noruega](https://api.met.no) (CC BY 4.0): respaldo del pronóstico del lugar.
 - [RainViewer](https://www.rainviewer.com): radar de precipitación.
 - [EUMETSAT](https://view.eumetsat.int) y [NASA GIBS](https://earthdata.nasa.gov/gibs): imágenes de satélite.
+- [GeoNames](https://www.geonames.org) (CC BY 4.0): pueblos de más de 1.000 habitantes que aparecen al ampliar el mapa.
 - [Natural Earth](https://www.naturalearthdata.com) (dominio público): costas, fronteras y provincias dibujadas sobre el mapa y máscara de las capas de mar.
 - Esri, OpenStreetMap y OpenTopoMap: mapas base. BigDataCloud: nombre del lugar a partir de coordenadas.
 

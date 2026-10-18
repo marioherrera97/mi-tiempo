@@ -325,13 +325,15 @@ export class FieldLayer {
       }
       return true;
     };
-    // Primero los lugares propios (lugar elegido y favoritos), luego las ciudades por tamaño
-    for (const p of this.places || []) draw(p.name, p.lat, p.lon, true);
+    // Primero los lugares propios (lugar elegido y favoritos), luego ciudades y pueblos por población
+    const mine = this.places || [];
+    for (const p of mine) draw(p.name, p.lat, p.lon, true);
     const b = this.bounds;
     let n = 0;
     for (const c of this.cities) {
-      if (c[3] > z + 1.6 || !b.contains([c[1], c[2]])) continue;
-      if (draw(c[0], c[1], c[2], false) && ++n >= 120) break;
+      if (c[3] > z + 1 || !b.contains([c[1], c[2]])) continue;
+      if (mine.some((p) => Math.abs(p.lat - c[1]) < 0.02 && Math.abs(p.lon - c[2]) < 0.03)) continue; // ya rotulado
+      if (draw(c[0], c[1], c[2], false) && ++n >= 150) break;
     }
   }
 

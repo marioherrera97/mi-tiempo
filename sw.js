@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -71,6 +71,15 @@ self.addEventListener('fetch', (e) => {
         return res;
       })));
     }
+    return;
+  }
+
+  // Pueblos por zonas: no cambian, primero caché
+  if (url.origin === self.location.origin && url.pathname.includes('/vendor/places/')) {
+    e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(TILES).then((c) => c.put(req, copy)); }
+      return res;
+    })));
     return;
   }
 

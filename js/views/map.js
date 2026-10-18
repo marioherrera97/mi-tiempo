@@ -353,6 +353,34 @@ function loadLand() {
   geoData('land').then((rings) => S.field.setLand(rings)).catch(() => { landLoaded = false; });
 }
 
+// ---------- Pueblos (GeoNames, >1.000 hab.) por zonas de 5°, cargados al ampliar ----------
+const placeTiles = new Map();
+let placeIndex = null;
+function updateCities() {
+  const extra = [...placeTiles.values()].flat();
+  const all = (S.baseCities || []).concat(extra);
+  if (extra.length) all.sort((a, b) => b[4] - a[4]);
+  S.field?.setCities(all);
+}
+async function loadPlaceTiles() {
+  if (!S.cities || S.map.getZoom() < 6) return;
+  try {
+    placeIndex ||= new Set(await fetch('vendor/places/index.json').then((r) => r.json()));
+  } catch { placeIndex = null; return; }
+  const b = S.map.getBounds();
+  const keys = [];
+  for (let la = Math.floor(b.getSouth() / 5); la <= Math.floor(b.getNorth() / 5); la++) {
+    for (let lo = Math.floor(b.getWest() / 5); lo <= Math.floor(b.getEast() / 5); lo++) {
+      const k = `${la}_${lo}`;
+      if (placeIndex.has(k) && !placeTiles.has(k)) keys.push(k);
+    }
+  }
+  if (!keys.length) return;
+  const got = await Promise.all(keys.map((k) => fetch(`vendor/places/${k}.json`).then((r) => r.json()).then((rows) => [k, rows]).catch(() => null)));
+  for (const g of got) if (g) placeTiles.set(g[0], g[1]);
+  updateCities();
+}
+
 // Lugar elegido y favoritos, rotulados en el mapa con su valor
 function updatePlaces() {
   const seen = new Set();
@@ -860,6 +888,7 @@ function buildMenu() {
       save('map.cities', checked);
       if (S.labels) { if (S.cities) S.map.removeLayer(S.labels); else S.labels.addTo(S.map); }
       prepareLayer();
+      loadPlaceTiles();
     }
   };
   const st = el('mapStatusTxt');
@@ -995,7 +1024,9 @@ export default {
       S.field = new FieldLayer(map);
       showBorders();
       map.on('zoomend', toggleRegions);
-      geoData('cities').then((c) => S.field.setCities(c)).catch(() => {});
+      geoData('cities').then((c) => { S.baseCities = c; updateCities(); }).catch(() => {});
+      map.on('moveend', loadPlaceTiles);
+      map.whenReady(() => loadPlaceTiles());
       updatePlaces();
       on('favorites', updatePlaces);
       S.marker = L.marker([state.place.lat, state.place.lon], { icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16, 16] }) }).addTo(map);

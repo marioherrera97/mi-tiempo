@@ -42,6 +42,19 @@ La forma más sencilla es **GitHub Pages**:
 
 Alternativas igual de válidas: Netlify Drop (arrastrar la carpeta a <https://app.netlify.com/drop>) o Cloudflare Pages.
 
+## App Android (APK)
+
+`android/` contiene una app Android mínima (sin Gradle) que abre la web publicada a pantalla completa,
+con permiso de ubicación y botón atrás. Al cargar siempre la versión publicada, se actualiza sola.
+
+```bash
+python android/build.py 2 1.1
+```
+
+Genera `android/MiTiempo.apk` con las herramientas del SDK de Android (Android Studio) y Java.
+La primera vez crea la clave de firma `android/release.keystore` y `android/keystore.properties`:
+**no se suben a Git; guárdalas**, porque para instalar una APK nueva encima de la anterior hace falta la misma clave.
+
 ## Fuentes de datos
 
 Todas son públicas y gratuitas para uso personal (no comercial):

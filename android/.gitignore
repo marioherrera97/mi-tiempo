@@ -1,0 +1,4 @@
+build/
+release.keystore
+keystore.properties
+*.apk

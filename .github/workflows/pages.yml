@@ -1,0 +1,63 @@
+# Publica Mi Tiempo en GitHub Pages junto con los datos propios del ECMWF para el mapa.
+# Se ejecuta al subir cambios y cada 6 horas (cuando el ECMWF publica una pasada nueva).
+# Los datos no se guardan en Git: viven en la caché de Actions y en la web publicada.
+name: Publicar web y datos ECMWF
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '20 2,8,14,20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Dependencias
+        run: pip install -r pipeline/requirements.txt
+
+      # Recupera la última pasada ya generada para no descargarla otra vez
+      - name: Caché de datos ECMWF
+        uses: actions/cache@v4
+        with:
+          path: data/ecmwf
+          key: ecmwf-${{ github.run_id }}
+          restore-keys: ecmwf-
+
+      - name: Descargar y convertir ECMWF
+        run: python pipeline/ecmwf.py data/ecmwf
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -154,7 +154,10 @@ function init() {
 
   const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   if ('serviceWorker' in navigator && (!isLocal || location.search.includes('sw'))) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // Cuando se publica una versión nueva, el service worker se activa y la app se recarga sola
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
+    navigator.serviceWorker.register('sw.js').then((reg) => reg.update()).catch(() => {});
   }
 }
 

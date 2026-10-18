@@ -7,7 +7,8 @@ let freshAfter = 0;
 export const clearCache = () => { mem.clear(); freshAfter = Date.now(); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Copia persistente de las respuestas (Cache API): al reabrir la app no se repiten descargas
+// Copia persistente de las respuestas (Cache API): al reabrir la app no se repiten descargas.
+// Los modelos se actualizan cada pocas horas, así que los datos se reutilizan entre 45 min y 12 h según el tipo
 // y, si la API falla o se agota la cuota gratuita, se muestran los últimos datos guardados.
 const STORE = 'mitiempo-api-v1';
 const MAX_STORED = 80;
@@ -146,7 +147,7 @@ export async function forecast(p, model = 'best_match') {
     past_minutely_15: model === 'best_match' ? 1 : undefined,
     models: model === 'best_match' ? undefined : model,
   });
-  const d = await getJSON(url);
+  const d = await getJSON(url, { ttl: 45 * 60e3 });
   return trimNulls(d);
 }
 
@@ -169,7 +170,7 @@ export async function compareModels(p, models, vars) {
   const url = build('https://api.open-meteo.com/v1/forecast', {
     ...coord(p), timezone: 'auto', forecast_days: 16, hourly: vars, models,
   });
-  return getJSON(url);
+  return getJSON(url, { ttl: 2 * 3600e3 });
 }
 
 // ---------- Ensembles (hasta 35 días) ----------
@@ -177,7 +178,7 @@ export async function ensemble(p, model, days, hourly, daily) {
   const url = build('https://ensemble-api.open-meteo.com/v1/ensemble', {
     ...coord(p), timezone: 'auto', models: model, forecast_days: days, hourly, daily,
   });
-  return getJSON(url, { ttl: 30 * 60e3 });
+  return getJSON(url, { ttl: 3 * 3600e3 });
 }
 
 // ---------- Estacional ECMWF (EC46 + SEAS5, hasta 6 meses) ----------
@@ -185,7 +186,7 @@ export async function seasonal(p, block, vars) {
   const url = build('https://seasonal-api.open-meteo.com/v1/seasonal', {
     ...coord(p), timezone: 'auto', [block]: vars,
   });
-  return getJSON(url, { ttl: 3 * 3600e3 });
+  return getJSON(url, { ttl: 12 * 3600e3 });
 }
 
 // ---------- Mar ----------
@@ -201,7 +202,7 @@ export async function marine(p) {
     ],
     daily: ['wave_height_max', 'wave_direction_dominant', 'wave_period_max', 'swell_wave_height_max'],
   });
-  return getJSON(url);
+  return getJSON(url, { ttl: 60 * 60e3 });
 }
 
 // ---------- Calidad del aire y polen ----------
@@ -211,7 +212,7 @@ export async function airQuality(p) {
   const url = build('https://air-quality-api.open-meteo.com/v1/air-quality', {
     ...coord(p), timezone: 'auto', forecast_days: 5, current: vars, hourly: [...vars, ...pollen],
   });
-  return getJSON(url);
+  return getJSON(url, { ttl: 60 * 60e3 });
 }
 
 // ---------- Histórico (ERA5 desde 1940) ----------
@@ -246,7 +247,7 @@ export async function grid(lats, lons, vars, days, model) {
     hourly: vars, forecast_days: days, timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'nearest',
     models: model === 'best_match' ? undefined : model,
   });
-  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
+  return gridPoints(await getJSON(url, { ttl: 90 * 60e3 }));
 }
 
 export async function marineGrid(lats, lons, vars, days) {
@@ -255,7 +256,7 @@ export async function marineGrid(lats, lons, vars, days) {
     longitude: lons.map((v) => v.toFixed(2)),
     hourly: vars, forecast_days: days, timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'sea', // la costa se recorta en el mapa
   });
-  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
+  return gridPoints(await getJSON(url, { ttl: 90 * 60e3 }));
 }
 
 export async function airGrid(lats, lons, vars, days) {
@@ -264,7 +265,7 @@ export async function airGrid(lats, lons, vars, days) {
     longitude: lons.map((v) => v.toFixed(2)),
     hourly: vars, forecast_days: Math.min(days, 5), timezone: 'GMT', timeformat: 'unixtime', cell_selection: 'nearest',
   });
-  return gridPoints(await getJSON(url, { ttl: 30 * 60e3 }));
+  return gridPoints(await getJSON(url, { ttl: 90 * 60e3 }));
 }
 
 // ---------- Búsqueda de lugares ----------

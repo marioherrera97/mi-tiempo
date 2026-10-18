@@ -9,6 +9,7 @@ import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from 
 import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
 import * as own from '../owndata.js';
+import { makeThumbs, thumbUrl } from '../thumbs.js';
 
 // ---------- Altitudes ----------
 const LEVELS = {
@@ -641,7 +642,19 @@ function thumb(k) {
     };
     bg = `linear-gradient(135deg, ${c(0.1)}, ${c(0.32)} 35%, ${c(0.58)} 65%, ${c(0.9)}), #2b3440`;
   }
-  return `<span class="w-thumb" style="background:${bg}">${SVG(IC[LAYER_ICON[k]] || IC.wind)}</span>`;
+  const url = thumbUrl(k);
+  if (url) bg = `center / cover url(${url})`;
+  return `<span class="w-thumb" data-th="${k}" style="background:${bg}">${SVG(IC[LAYER_ICON[k]] || IC.wind)}</span>`;
+}
+// Las miniaturas tipo mapa se generan la primera vez que se abre el menú (hacen falta las costas)
+let thumbsBusy = false;
+function loadThumbs() {
+  if (thumbsBusy || thumbUrl('wind')) return;
+  thumbsBusy = true;
+  geoData('land').then((land) => setTimeout(() => {
+    makeThumbs(LAYERS, land);
+    document.querySelectorAll('.w-thumb[data-th]').forEach((el) => { el.style.background = `center / cover url(${thumbUrl(el.dataset.th)})`; });
+  }, 30)).catch(() => { thumbsBusy = false; });
 }
 
 // ---------- Leyenda a todo lo ancho (toca la unidad para cambiarla, como en Windy) ----------
@@ -959,7 +972,7 @@ function buildMenu() {
   const st = el('mapStatusTxt');
   if (st && S.spec) st.textContent = `${api.modelName(settings.model)} · rejilla ${S.spec.nx}×${S.spec.ny} puntos`;
 }
-function openMenu() { buildMenu(); el('wMenu').classList.add('open'); el('wMenuShade').classList.add('open'); }
+function openMenu() { buildMenu(); loadThumbs(); el('wMenu').classList.add('open'); el('wMenuShade').classList.add('open'); }
 function closeMenu() { el('wMenu').classList.remove('open'); el('wMenuShade').classList.remove('open'); }
 
 function sideState() {

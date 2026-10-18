@@ -1096,6 +1096,16 @@ export default {
       fitAttribution();
       setBase();
       S.field = new FieldLayer(map);
+      // Los nombres de ciudades no se ponen debajo de los botones ni de las barras
+      const avoidUI = () => {
+        const m = map.getContainer().getBoundingClientRect();
+        S.field.avoid = [...root.querySelectorAll('.w-top, .w-side button, .w-menu-btn, .w-bottom')]
+          .map((b) => b.getBoundingClientRect()).filter((r) => r.width)
+          .map((r) => [r.left - m.left - 4, r.top - m.top - 4, r.width + 8, r.height + 8]);
+        S.field.drawIso();
+      };
+      new ResizeObserver(avoidUI).observe(map.getContainer());
+      new ResizeObserver(avoidUI).observe(root.querySelector('.w-top'));
       showBorders();
       showWater();
       map.on('zoomend', toggleRegions);

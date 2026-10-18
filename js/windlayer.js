@@ -270,8 +270,11 @@ export class FieldLayer {
     ctx.setTransform(c.dpr || 1, 0, 0, c.dpr || 1, 0, 0);
     ctx.clearRect(0, 0, geo.w, geo.h);
     const g = this.grid || { vars: {} };
-    if (this.style.iso && g.vars[this.style.iso.var]) this._isolines(ctx, this.style.iso);
+    // Los números de las isolíneas se ponen al final, donde no pisen los nombres de las ciudades
+    const isoLabels = this.style.iso && g.vars[this.style.iso.var] ? this._isolines(ctx, this.style.iso) : null;
+    this.cityBoxes = [];
     if (this.style.cities && this.cities) this._cityLabels(ctx);
+    if (isoLabels) this._isoLabels(ctx, isoLabels);
     if (this.style.values && g.vars[this.style.values.var]) this._values(ctx, this.style.values);
   }
 
@@ -284,11 +287,13 @@ export class FieldLayer {
     const geo = this.geo;
     const z = this.map.getZoom();
     const cfg = this.style.cities;
-    const boxes = [];
+    const boxes = this.cityBoxes;
     const fits = (x, y, w, h) => {
       if (x < 4 || y < 4 || x + w > geo.w - 4 || y + h > geo.h - 4) return false;
       // Separación generosa entre rótulos para que el mapa respire, como en Windy
       const mx = 34, my = 26;
+      // avoid viene en coordenadas del mapa; el lienzo está desplazado (ox, oy)
+      for (const b of this.avoid || []) if (x < b[0] + geo.ox + b[2] && x + w > b[0] + geo.ox && y < b[1] + geo.oy + b[3] && y + h > b[1] + geo.oy) return false;
       for (const b of boxes) if (x - mx < b[0] + b[2] && x + w + mx > b[0] && y - my < b[1] + b[3] && y + h + my > b[1]) return false;
       boxes.push([x, y, w, h]);
       return true;
@@ -364,7 +369,6 @@ export class FieldLayer {
     if (!Number.isFinite(vmin)) return;
     const { w, h } = this.geo;
     const labels = [];
-    const placed = [];
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(255,255,255,0.75)';
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
@@ -392,14 +396,10 @@ export class FieldLayer {
             ctx.moveTo(a[0], a[1]);
             ctx.lineTo(b[0], b[1]);
             segCount++;
-            // Etiqueta cada cierto número de segmentos, lejos de otras
+            // Candidatos a etiqueta cada cierto número de segmentos (se eligen en _isoLabels)
             if (segCount % 18 === 9) {
               const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
-              if (mx > 20 && my > 20 && mx < w - 20 && my < h - 20 &&
-                placed.every(([px, py]) => (px - mx) ** 2 + (py - my) ** 2 > 110 * 110)) {
-                placed.push([mx, my]);
-                labels.push([mx, my, iso.fmt(L0)]);
-              }
+              if (mx > 20 && my > 20 && mx < w - 20 && my < h - 20) labels.push([mx, my, iso.fmt(L0)]);
             }
           }
         }
@@ -407,17 +407,29 @@ export class FieldLayer {
       ctx.stroke();
     }
     ctx.shadowBlur = 0;
+    if (iso.extrema) this._extrema(ctx, iso, vals, NX, NY, xs, ys);
+    return labels;
+  }
+
+  // Números de las isolíneas: separados entre sí y sin tapar los rótulos de las ciudades
+  _isoLabels(ctx, labels) {
+    ctx.shadowBlur = 0;
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const [x, y, txt] of labels.slice(0, 60)) {
+    const placed = [];
+    for (const [x, y, txt] of labels) {
+      if (placed.length >= 60) break;
       const tw = ctx.measureText(txt).width + 8;
+      if (!placed.every(([px, py]) => (px - x) ** 2 + (py - y) ** 2 > 110 * 110)) continue;
+      const l = x - tw / 2 - 3, r = x + tw / 2 + 3, t = y - 11, bt = y + 11;
+      if (this.cityBoxes.some((c) => l < c[0] + c[2] && r > c[0] && t < c[1] + c[3] && bt > c[1])) continue;
+      placed.push([x, y]);
       ctx.fillStyle = 'rgba(15,20,28,0.75)';
       ctx.fillRect(x - tw / 2, y - 8, tw, 16);
       ctx.fillStyle = '#fff';
       ctx.fillText(txt, x, y);
     }
-    if (iso.extrema) this._extrema(ctx, iso, vals, NX, NY, xs, ys);
   }
 
   // Altas (A) y bajas (B)

@@ -147,3 +147,5 @@ body.map-mode { background: #2b2b2b; }
 .wd-bar span { font-size: 12px; opacity: .85; }
 .wd-bar select { background: transparent; color: #fff; border: 0; font-size: 17px; padding: 0; -webkit-appearance: none; appearance: none; width: 100%; }
 .wd-bar option { color: #111; }
+
+.wd-src { margin: 4px 12px 0; font-size: 12px; color: #ffd27a; }

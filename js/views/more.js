@@ -16,6 +16,8 @@ export default {
       </a>`).join('')}</div>
       <p class="footer-note">Mi Tiempo · app personal con datos abiertos<br>
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0) ·
+      <a href="https://www.ecmwf.int/en/forecasts/datasets/open-data" target="_blank" rel="noopener">ECMWF</a> (CC BY 4.0) ·
+      <a href="https://api.met.no" target="_blank" rel="noopener">MET Noruega</a> ·
       <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a> ·
       <a href="https://www.eumetsat.int" target="_blank" rel="noopener">EUMETSAT</a> · NASA GIBS · Esri · OpenStreetMap</p>`;
   },

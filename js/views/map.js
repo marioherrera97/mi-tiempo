@@ -8,6 +8,7 @@ import { gradientCSS, colorAt } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
 import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
+import * as own from '../owndata.js';
 
 // ---------- Altitudes ----------
 const LEVELS = {
@@ -146,8 +147,92 @@ async function fetchGroup(name, spec) {
   return api.grid(...args, settings.model);
 }
 
+// ---------- Datos propios del ECMWF (sin cuota, generados por GitHub cada 6 h) ----------
+const OWN_MODELS = ['best_match', 'ecmwf_ifs', 'ecmwf_ifs025'];
+const timeMs = (g, t) => Date.parse(g.times[t] + ':00Z');
+// Índice de la hora más cercana a un instante (para no perder la hora al cambiar de fuente)
+function nearestIndex(g, ms) {
+  let best = 0;
+  for (let i = 0; i < g.nt; i++) if (Math.abs(timeMs(g, i) - ms) < Math.abs(timeMs(g, best) - ms)) best = i;
+  return best;
+}
+function currentMs() { return S.grid ? timeMs(S.grid, Math.min(S.t, S.grid.nt - 1)) : null; }
+
+async function ownUsable() {
+  if (!OWN_MODELS.includes(settings.model)) return null;
+  const imgs = own.imagesFor(S.layer, S.level);
+  if (!imgs) return null;
+  const meta = await own.loadMeta();
+  if (!meta) return null;
+  const g = meta.grid, c = S.map.getCenter();
+  const north = g.south + (g.ny - 1) * g.res, east = g.west + (g.nx - 1) * g.res;
+  if (c.lat < g.south || c.lat > north || c.lng < g.west || c.lng > east) return null;
+  return { meta, imgs };
+}
+
+async function loadOwn({ meta, imgs }) {
+  const gen = `${meta.runId}|${imgs.join('')}`;
+  if (!S.grid?.own || S.grid.run !== meta.runId) {
+    const prev = currentMs();
+    S.grid = own.createGrid(meta);
+    S.spec = null;
+    const now = Date.now();
+    S.t0 = 0;
+    for (let i = 0; i < S.grid.nt; i++) if (timeMs(S.grid, i) <= now) S.t0 = i;
+    S.t = prev ? Math.max(S.t0, nearestIndex(S.grid, prev)) : S.t0;
+    S.tf = 0;
+    S.ownGen = null;
+  }
+  if (S.ownGen === gen) { if (S.layer === 'rainacc') own.updateAccum(S.grid, S.t0); prepareLayer(); return; }
+  S.ownGen = gen;
+  const grid = S.grid;
+  S.loading++;
+  setStatus('Descargando ECMWF…');
+  try {
+    // Primero la hora que se está viendo (y la siguiente, para la animación)
+    await Promise.all(imgs.flatMap((img) => [S.t, Math.min(S.t + 1, grid.nt - 1)].map((t) => own.loadStep(grid, t, img))));
+    if (S.grid !== grid) return;
+    if (S.layer === 'rainacc') own.updateAccum(grid, S.t0);
+    S.field.t = S.t;
+    S.field.setGrid(grid);
+    prepareLayer();
+    buildDays();
+    placeBubble();
+    const run = new Date(meta.run);
+    setStatus(`ECMWF (0,5°) · datos propios · pasada ${run.getUTCDate()}/${run.getUTCMonth() + 1} ${String(run.getUTCHours()).padStart(2, '0')}z UTC`, 'ok');
+  } catch (e) {
+    S.ownGen = null;
+    setStatus('No se pudieron leer los datos propios: ' + e.message, 'error');
+    return;
+  } finally {
+    S.loading--;
+  }
+  // El resto de horas, en segundo plano
+  own.prefetch(grid, imgs, S.t, () => S.grid === grid && S.ownGen === gen, (t, img) => {
+    if (img === 'b' && S.layer === 'rainacc') own.updateAccum(grid, S.t0);
+    if (t === S.t || t === S.t + 1) S.field.setTime(S.t, S.tf || 0);
+  });
+}
+
+// Al saltar a una hora que aún no se ha descargado, se pide con prioridad
+function ensureOwnStep(t) {
+  const g = S.grid;
+  if (!g?.own) return;
+  const imgs = own.imagesFor(S.layer, S.level) || ['a', 'b'];
+  for (const tt of [t, Math.min(t + 1, g.nt - 1)]) {
+    if (own.stepLoaded(g, imgs, tt)) continue;
+    Promise.all(imgs.map((img) => own.loadStep(g, tt, img))).then(() => {
+      if (S.grid === g && (S.t === tt || S.t + 1 === tt)) S.field.setTime(S.t, S.tf || 0);
+    }).catch(() => {});
+  }
+}
+
 // Descarga la rejilla de la vista actual (si hace falta) y los grupos de datos que pide la capa
 async function loadData(force = false) {
+  const o = await ownUsable();
+  if (o) { await loadOwn(o); return; }
+  // Fuera de Europa, otra capa u otro modelo: rejilla de Open-Meteo
+  if (S.grid?.own) { S.prevMs = currentMs(); S.grid = null; S.spec = null; S.ownGen = null; force = true; }
   const map = S.map;
   const b = map.getBounds().pad(0.25);
   const south = Math.max(-80, b.getSouth()), north = Math.min(80, b.getNorth());
@@ -184,6 +269,7 @@ async function loadData(force = false) {
         S.grid = emptyGrid({ lat0: spec.south, lon0: spec.west, dlat: spec.dlat, dlon: spec.dlon, nx: spec.nx, ny: spec.ny }, pts[0].hourly.time);
         const nowKey = new Date().toISOString().slice(0, 13);
         S.t0 = Math.max(0, S.grid.times.findIndex((t) => t.slice(0, 13) === nowKey));
+        if (S.prevMs) { S.t = Math.max(S.t0, nearestIndex(S.grid, S.prevMs)); S.prevMs = null; }
         if (S.t < S.t0 || S.t >= S.grid.nt) S.t = S.t0;
       }
       mergePoints(S.grid, pts, GROUPS[name].vars);
@@ -571,7 +657,7 @@ function updateSlider() {
 
 function setTime(i, frac = 0) {
   const o = obs();
-  if (o) o.set(i); else { S.t = i; S.tf = frac; S.field.setTime(i, frac); if (!frac) updatePicker(); }
+  if (o) o.set(i); else { S.t = i; S.tf = frac; ensureOwnStep(i); S.field.setTime(i, frac); if (!frac) updatePicker(); }
   const r = el('mapRange');
   if (r) r.value = i;
   placeBubble();
@@ -590,9 +676,10 @@ function placeBubble() {
   if (o) {
     b.textContent = o.times[o.idx] ? hhmmLocal(o.times[o.idx]) : '';
   } else if (S.grid) {
-    const d = new Date(S.grid.times[S.t] + ':00Z');
-    const mins = Math.round((S.tf || 0) * 60);
-    b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    const g = S.grid, t = Math.min(S.t, g.nt - 1);
+    const ms = timeMs(g, t) + (S.tf && t + 1 < g.nt ? S.tf * (timeMs(g, t + 1) - timeMs(g, t)) : 0);
+    const d = new Date(Math.round(ms / 900e3) * 900e3);
+    b.textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
   const W = r.clientWidth;
   const x = pos * W;
@@ -750,7 +837,7 @@ function buildMenu() {
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
     <div class="wm-row"><span>Resolución</span>${sel('grid', [['low', 'Baja'], ['normal', 'Normal'], ['high', 'Alta']], settings.mapGrid)}</div>
     <p class="wm-status" id="mapStatusTxt"></p>
-    <p class="wm-note">Datos: Open-Meteo (ECMWF, NOAA, DWD, Météo-France…), RainViewer, EUMETSAT y NASA. Más resolución u horizonte gastan más cuota gratuita (10.000 consultas/día).</p>`;
+    <p class="wm-note">Datos: ECMWF (datos abiertos, CC BY 4.0) procesados por la propia app para Europa; Open-Meteo (NOAA, DWD, Météo-France…), MET Noruega, RainViewer, EUMETSAT y NASA. Más resolución u horizonte gastan más cuota gratuita (10.000 consultas/día).</p>`;
   m.querySelector('[data-close]').onclick = closeMenu;
   m.querySelector('[data-favs]').onclick = () => { closeMenu(); el('placeBtn').click(); };
   m.querySelectorAll('a').forEach((a) => { a.addEventListener('click', closeMenu); });

@@ -1,15 +1,16 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v11';
+const VERSION = 'v12';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
+const ECMWF = 'ecmwf-v1';
 
 const SHELL_FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/styles.css', 'css/windy.css',
   'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/chart.js', 'vendor/land.json', 'vendor/borders.json', 'vendor/regions.json', 'vendor/cities.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/state.js', 'js/api.js', 'js/data.js', 'js/format.js', 'js/icons.js', 'js/colors.js',
-  'js/charts.js', 'js/ui.js', 'js/windlayer.js',
+  'js/charts.js', 'js/ui.js', 'js/windlayer.js', 'js/owndata.js', 'js/metno.js',
   'js/views/home.js', 'js/views/hourly.js', 'js/views/map.js', 'js/views/trend.js',
   'js/views/more.js', 'js/views/compare.js', 'js/views/marine.js', 'js/views/air.js',
   'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js',
@@ -23,7 +24,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => ![SHELL, DATA, TILES].includes(k)).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => ![SHELL, DATA, TILES, ECMWF].includes(k)).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
@@ -50,6 +51,26 @@ self.addEventListener('fetch', (e) => {
         return res;
       }).catch(() => caches.match(req).then((r) => r || Response.error()))
     );
+    return;
+  }
+
+  // Datos propios del ECMWF: meta.json siempre de la red; las imágenes no cambian dentro de una pasada
+  if (url.origin === self.location.origin && url.pathname.includes('/data/ecmwf/')) {
+    if (url.pathname.endsWith('meta.json')) {
+      e.respondWith(fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(ECMWF).then((c) => c.put(req, copy));
+        return res;
+      }).catch(() => caches.match(req).then((r) => r || Response.error())));
+    } else {
+      e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(ECMWF).then((c) => c.put(req, copy)).then(() => trimCache(ECMWF, 700));
+        }
+        return res;
+      })));
+    }
     return;
   }
 

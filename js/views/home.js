@@ -252,7 +252,7 @@ export default {
           ${sunMoon(d)}
         </div>
         <div id="homeAir" style="margin-top:12px"></div>
-        <p class="footer-note">Modelo: ${api.modelName(settings.model)} · Altitud ${Math.round(d.elevation)} m<br>
+        <p class="footer-note">${d.source === 'met' ? 'Fuente: <b>MET Noruega</b> (respaldo: Open-Meteo no disponible ahora)' : 'Modelo: ' + api.modelName(settings.model)} · Altitud ${Math.round(d.elevation)} m<br>
         Actualizado ${f.relTime(lastUpdate)} · Datos: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0)</p>`;
       el.querySelectorAll('.drow').forEach((b) => { b.onclick = () => openDay(d, +b.dataset.day); });
       airCard(el.querySelector('#homeAir'));

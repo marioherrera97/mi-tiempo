@@ -55,6 +55,19 @@ Genera `android/MiTiempo.apk` con las herramientas del SDK de Android (Android S
 La primera vez crea la clave de firma `android/release.keystore` y `android/keystore.properties`:
 **no se suben a Git; guárdalas**, porque para instalar una APK nueva encima de la anterior hace falta la misma clave.
 
+## Datos propios del mapa (ECMWF) y respaldo
+
+- **Mapa:** el flujo `.github/workflows/pages.yml` se ejecuta cada 6 horas en GitHub Actions. `pipeline/ecmwf.py`
+  descarga la última pasada del **ECMWF IFS** (datos abiertos, CC BY 4.0), recorta Europa y norte de África a 0,5°
+  hasta 10 días y la guarda como PNG ligeros (unos 9 MB por pasada) que se publican con la web en `data/ecmwf/`.
+  El mapa los usa con el modelo Automático o ECMWF dentro de Europa para viento (superficie, 1.500 y 5.500 m),
+  rachas, temperatura, rocío, humedad, lluvia, lluvia acumulada, nubes, presión y CAPE, **sin gastar cuota de
+  ninguna API**. Fuera de esa zona, con otros modelos o con otras capas, el mapa sigue pidiendo los datos a Open-Meteo.
+- **Pronóstico del lugar:** si Open-Meteo falla o se agota su cuota, se usa automáticamente **MET Noruega**
+  (api.met.no, sin clave ni límite diario); la app indica cuándo está usando este respaldo.
+
+Para generar los datos en local: `pip install -r pipeline/requirements.txt` y `python pipeline/ecmwf.py data/ecmwf`.
+
 ## Fuentes de datos
 
 Todas son públicas y gratuitas para uso personal (no comercial):
@@ -64,6 +77,8 @@ Todas son públicas y gratuitas para uso personal (no comercial):
   Límite gratuito: 10.000 llamadas al día; el mapa pide una rejilla de puntos y es lo que más consume
   (ajusta la resolución en el menú de capas del mapa si hiciera falta). La app guarda las descargas en el
   dispositivo para no repetirlas y, si se agota la cuota, muestra los últimos datos guardados.
+- [ECMWF](https://www.ecmwf.int/en/forecasts/datasets/open-data) (CC BY 4.0): modelo IFS para el mapa, procesado en GitHub Actions.
+- [MET Noruega](https://api.met.no) (CC BY 4.0): respaldo del pronóstico del lugar.
 - [RainViewer](https://www.rainviewer.com): radar de precipitación.
 - [EUMETSAT](https://view.eumetsat.int) y [NASA GIBS](https://earthdata.nasa.gov/gibs): imágenes de satélite.
 - [Natural Earth](https://www.naturalearthdata.com) (dominio público): costas, fronteras y provincias dibujadas sobre el mapa y máscara de las capas de mar.

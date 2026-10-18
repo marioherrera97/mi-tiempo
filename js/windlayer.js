@@ -42,13 +42,17 @@ export class FieldLayer {
     this.canvases = [this.fieldCanvas, this.windCanvas, this.isoCanvas];
     this.small = document.createElement('canvas');
 
+    // Durante el zoom los colores se estiran como una imagen, pero los textos (ciudades, isobaras)
+    // se ocultan: estirados se desplazarían. Al terminar se redibujan en su sitio, como en Windy.
+    const hideText = (on) => { this.isoCanvas.style.visibility = on ? 'hidden' : ''; };
     this._h = {
       movestart: () => this.clearParticles(),
-      moveend: () => this.redraw(),
+      moveend: () => { this.redraw(); hideText(false); },
       resize: () => this.redraw(),
-      zoomstart: () => this.clearParticles(),
+      zoomstart: () => { this.clearParticles(); hideText(true); },
       zoomanim: (e) => this._animateZoom(e),
       zoom: () => this._scaleToView(),
+      // (se vuelven a mostrar en moveend, que Leaflet lanza siempre tras el zoom y ya con el redibujado hecho)
     };
     map.on(this._h);
   }

@@ -192,6 +192,7 @@ export default {
 
       el.innerHTML = `
         <div class="toolbar" id="hTools"></div>
+        ${d.source === 'met' ? '<p class="note" style="margin:0 4px 6px"><b>Fuente: MET Noruega</b> (respaldo mientras Open-Meteo no está disponible). Algunas filas, como CAPE o isocero, no las da este servicio.</p>' : ''}
         <p class="note" style="margin:0 4px 10px">Datos hasta el ${f.dayLong(lastDay)} · ${f.isNum(d.elevation) ? 'altitud de la rejilla ' + Math.round(d.elevation) + ' m' : ''}. Desliza la tabla en horizontal.</p>
         ${table(d, idx, ni)}
         <div class="legend-row"><span>Nubes: B&lt;2 km, M 2–6 km, A&gt;6 km</span><span>Isocero en km</span><span>Visibilidad en ${settings.distance === 'mi' ? 'mi' : 'km'}</span></div>

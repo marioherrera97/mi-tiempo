@@ -30,20 +30,33 @@ jobs:
 
       - name: Descargar embalses y lagos de OpenStreetMap
         run: |
-          B='35.8,-9.9,44.0,4.6'
-          Q="[out:json][timeout:900][maxsize:2000000000];(
-            way[\"natural\"=\"water\"][\"water\"~\"^(reservoir|lake|lagoon|basin)$\"][\"name\"]($B);
-            relation[\"natural\"=\"water\"][\"water\"~\"^(reservoir|lake|lagoon|basin)$\"]($B);
-            way[\"landuse\"=\"reservoir\"][\"name\"]($B);
-            relation[\"landuse\"=\"reservoir\"]($B);
-          );out geom;"
-          for url in https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter https://maps.mail.ru/osm/tools/overpass/api/interpreter; do
-            if curl -sSf --max-time 1200 -o osm.json --data-urlencode "data=$Q" "$url" && python -c "import json; d=json.load(open('osm.json')); assert len(d['elements']) > 500, len(d['elements'])"; then
-              echo "OK desde $url"; ls -la osm.json; exit 0
-            fi
-            echo "Falló $url"; sleep 30
+          # En cuatro trozos para no saturar los servidores de Overpass
+          n=0
+          for B in '35.8,-9.9,40.0,-2.6' '35.8,-2.6,40.0,4.6' '40.0,-9.9,44.0,-2.6' '40.0,-2.6,44.0,4.6'; do
+            n=$((n+1))
+            Q="[out:json][timeout:600];(
+              way[\"natural\"=\"water\"][\"water\"~\"^(reservoir|lake|lagoon|basin)$\"][\"name\"]($B);
+              relation[\"natural\"=\"water\"][\"water\"~\"^(reservoir|lake|lagoon|basin)$\"]($B);
+              way[\"landuse\"=\"reservoir\"][\"name\"]($B);
+              relation[\"landuse\"=\"reservoir\"]($B);
+            );out geom;"
+            ok=0
+            for try in 1 2 3; do
+              for url in https://overpass-api.de/api/interpreter https://overpass.private.coffee/api/interpreter https://overpass.kumi.systems/api/interpreter; do
+                if curl -sSf --max-time 900 -A 'MiTiempo/1.0 (+https://github.com/marioherrera97/mi-tiempo)' \
+                     -o osm_$n.json --data-urlencode "data=$Q" "$url" \
+                   && python -c "import json; d=json.load(open('osm_$n.json')); assert len(d['elements']) > 50, len(d['elements'])"; then
+                  echo "Trozo $n OK desde $url"; ok=1; break 2
+                fi
+                echo "Trozo $n falló en $url"; sleep 20
+              done
+              sleep 60
+            done
+            [ $ok = 1 ] || exit 1
           done
-          exit 1
+          # Une los trozos sin repetir lo que cae en dos a la vez
+          python -c "import json, glob; u = {(e['type'], e['id']): e for f in sorted(glob.glob('osm_*.json')) for e in json.load(open(f))['elements']}; json.dump({'elements': list(u.values())}, open('osm.json', 'w')); print(len(u), 'elementos')"
+          ls -la osm*.json
 
       - name: Generar ficheros
         run: python pipeline/hydro.py ne vendor osm.json

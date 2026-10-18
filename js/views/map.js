@@ -108,7 +108,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -869,6 +869,7 @@ function buildMenu() {
     ${tog('particles', 'Partículas animadas', S.particles)}
     ${tog('cities', 'Ciudades con su valor', S.cities)}
     ${tog('values', 'Números en rejilla', S.values)}
+    ${tog('relief', 'Relieve del terreno', S.relief)}
     ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
@@ -892,6 +893,7 @@ function buildMenu() {
     if (name === 'iso') { S.iso = value; save('map.iso', value); sideState(); prepareLayer(); }
     if (name === 'particles') { S.particles = checked; sideState(); prepareLayer(); }
     if (name === 'values') { S.values = checked; save('map.values', checked); sideState(); prepareLayer(); }
+    if (name === 'relief') { S.relief = checked; save('map.relief', checked); if (checked) S.reliefLayer.addTo(S.map); else S.map.removeLayer(S.reliefLayer); }
     if (name === 'borders') { S.borders = checked; save('map.borders', checked); showBorders(); }
     if (name === 'cities') {
       S.cities = checked;
@@ -1022,6 +1024,13 @@ export default {
       map.createPane('bordersPane').style.zIndex = 365;
       map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
+      // Relieve sombreado sobre los colores (se mezcla con ellos como en Windy)
+      const relief = map.createPane('reliefPane');
+      // Las teselas de Esri son casi blancas: una curva gamma acentúa las sombras sin oscurecer lo llano
+      document.body.insertAdjacentHTML('beforeend', '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="reliefGamma" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="gamma" exponent="3"/><feFuncG type="gamma" exponent="3"/><feFuncB type="gamma" exponent="3"/></feComponentTransfer></filter></svg>');
+      Object.assign(relief.style, { zIndex: 356, pointerEvents: 'none', mixBlendMode: 'multiply', opacity: 0.75, filter: 'url(#reliefGamma)' });
+      S.reliefLayer = L.tileLayer(ESRI + 'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { pane: 'reliefPane', maxZoom: 18, maxNativeZoom: 13, attribution: 'Relieve: Esri' });
+      if (S.relief) S.reliefLayer.addTo(map);
       // La atribución va justo encima del panel inferior, que cambia de altura
       const panel = root.querySelector('.w-bottom');
       const fitAttribution = () => {

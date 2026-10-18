@@ -33,7 +33,11 @@ export class FieldLayer {
     pane.style.zIndex = 350;
     pane.style.pointerEvents = 'none';
     this.fieldCanvas = L.DomUtil.create('canvas', 'field-canvas leaflet-zoom-animated', pane);
-    this.windCanvas = L.DomUtil.create('canvas', 'wind-canvas leaflet-zoom-animated', pane);
+    // Partículas en su propio panel, por encima del relieve sombreado
+    const windPane = map.createPane('windPane');
+    windPane.style.zIndex = 370;
+    windPane.style.pointerEvents = 'none';
+    this.windCanvas = L.DomUtil.create('canvas', 'wind-canvas leaflet-zoom-animated', windPane);
     // Isolíneas y números por encima de nombres de ciudades y partículas
     const isoPane = map.createPane('isoPane');
     isoPane.style.zIndex = 390;
@@ -283,7 +287,9 @@ export class FieldLayer {
     const boxes = [];
     const fits = (x, y, w, h) => {
       if (x < 4 || y < 4 || x + w > geo.w - 4 || y + h > geo.h - 4) return false;
-      for (const b of boxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false;
+      // Separación generosa entre rótulos para que el mapa respire, como en Windy
+      const mx = 34, my = 26;
+      for (const b of boxes) if (x - mx < b[0] + b[2] && x + w + mx > b[0] && y - my < b[1] + b[3] && y + h + my > b[1]) return false;
       boxes.push([x, y, w, h]);
       return true;
     };
@@ -494,7 +500,7 @@ export class FieldLayer {
     const flow = this.style.flow;
     if (!this.grid || !this.showParticles || !flow || !this.grid.vars[flow.u]) return;
     // Densidad constante en pantalla (el lienzo incluye el margen)
-    const n = Math.min(5000, Math.round((geo.w * geo.h) / 900));
+    const n = Math.min(4000, Math.round((geo.w * geo.h) / 1300));
     this.particles = Array.from({ length: n }, () => this._spawn());
     this.running = true;
     let last = 0;
@@ -524,7 +530,7 @@ export class FieldLayer {
     const d = this.windCanvas.dpr || 1;
     ctx.setTransform(d, 0, 0, d, 0, 0);
     ctx.globalCompositeOperation = 'destination-in';
-    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
     ctx.fillRect(0, 0, g.w, g.h);
     ctx.globalCompositeOperation = 'source-over';
     const k = 0.055 * (flow.k || 1); // píxeles por fotograma por km/h
@@ -546,7 +552,7 @@ export class FieldLayer {
       path.lineTo(nx, ny);
       p.x = nx; p.y = ny; p.age++;
     }
-    const styles = [['rgba(255,255,255,0.55)', 1], ['rgba(255,255,255,0.8)', 1.25], ['rgba(255,255,255,0.97)', 1.6]];
+    const styles = [['rgba(255,255,255,0.4)', 1], ['rgba(255,255,255,0.65)', 1.2], ['rgba(255,255,255,0.9)', 1.5]];
     paths.forEach((path, i) => {
       ctx.strokeStyle = styles[i][0];
       ctx.lineWidth = styles[i][1];

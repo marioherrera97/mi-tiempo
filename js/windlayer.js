@@ -314,13 +314,16 @@ export class FieldLayer {
     const FONT_NAME = (mine) => `${mine ? 700 : 500} 11px Roboto, "Segoe UI", system-ui, sans-serif`;
     const FONT_VAL = '500 12.5px Roboto, "Segoe UI", system-ui, sans-serif';
     // Texto blanco con halo difuso (dos pasadas de sombra), como las etiquetas de Windy
+    // Contorno negro fino (como Windy) y un halo suave para que se lean sobre cualquier color
     const soft = (txt, x, y) => {
-      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 2.6;
+      ctx.strokeStyle = 'rgba(0,0,0,0.78)';
+      ctx.shadowColor = 'rgba(0,0,0,0.55)';
       ctx.shadowBlur = shadow;
-      ctx.fillText(txt, x, y);
-      ctx.shadowColor = 'rgba(0,0,0,0.5)';
-      ctx.fillText(txt, x, y);
+      ctx.strokeText(txt, x, y);
       ctx.shadowBlur = 0;
+      ctx.fillText(txt, x, y);
     };
     const draw = (name, lat, lon, mine) => {
       const [x, y0] = this._toCanvas(lat, lon);

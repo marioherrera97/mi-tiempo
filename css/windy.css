@@ -292,3 +292,28 @@ body.map-mode { background: #2b2b2b; }
   .wd-tabs button.on { background: rgba(255,255,255,.22); }
   .wd-tabs button:hover { background: rgba(255,255,255,.12); }
 }
+
+/* Panel del punto compacto: filas más bajas, como la tabla de Windy */
+.wd-table td { height: 21px; line-height: 1.1; }
+.wd-table tr.r-day td { height: 22px; font-size: 12.5px; }
+.wd-table tr.r-hour td { font-size: 12.5px; }
+.wd-table tr.r-icon td { height: 26px; }
+.wd-table tr.r-icon .wx-ico { width: 23px; height: 23px; }
+.wd-table td.big { font-size: 14px; }
+.wd-table tr.r-gust td { height: 17px; font-size: 11px; }
+.wd-table .arrow { width: 13px; height: 13px; }
+.wd-top { padding: 6px 0 4px; }
+.wd-day .wx-ico { width: 24px; height: 24px; }
+.wd-bar label { padding: 4px 8px 5px 10px; }
+.wd-bar select { font-size: 13.5px; }
+@media (min-width: 900px) {
+  .wd-table td { height: 20px; font-size: 12px; }
+  .wd-table tr.r-gust td { height: 17px; }
+  .wd-table td.big { font-size: 14px; }
+  .wd-bar { padding: 3px 10px; }
+  .wd-tabs button { padding: 4px 12px; font-size: 14px; }
+  .wd-close { width: 34px; height: 34px; top: 6px; }
+  .wd-15v { margin-top: 24px; padding: 10px 4px; }
+  .wd-about { padding: 8px 14px; font-size: 12.5px; line-height: 1.35; }
+  .wd-about h4 { font-size: 15px; }
+}

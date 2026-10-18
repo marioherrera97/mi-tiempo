@@ -443,24 +443,21 @@ function styleBorders() {
   S.regionLines.setStyle({ color: ink, weight: 0.9, opacity: 0.5 });
 }
 
-// ---------- Ríos, lagos y embalses en tono oscuro sobre los colores (como en Windy) ----------
-// Natural Earth 10m (pipeline/hydro.py). Los ríos aparecen por importancia según el zoom.
-const RIVER_TIERS = [{ max: 4, zoom: 3, weight: 1.3 }, { max: 7, zoom: 5, weight: 1 }, { max: 99, zoom: 7, weight: 0.8 }];
+// ---------- Lagos y embalses en tono oscuro sobre los colores (como en Windy) ----------
+// Embalses y lagos (pipeline/hydro.py)
 async function showWater() {
   if (S.waterLayers) S.waterLayers.forEach((l) => S.map.removeLayer(l));
   S.waterLayers = null;
   if (!S.water) return;
   try {
-    const [lakes, rivers] = await Promise.all([geoData('lakes'), geoData('rivers')]);
+    // Solo lagos y embalses: los ríos de Natural Earth están tan simplificados que salían
+    // como rayas rectas que no siguen el cauce (Windy tampoco los dibuja)
+    const lakes = await geoData('lakes');
     if (!S.water || S.waterLayers) return;
     const renderer = L.canvas({ pane: 'waterPane', padding: 0.4 });
     const opt = { renderer, interactive: false, smoothFactor: 1, lineJoin: 'round', lineCap: 'round' };
     S.lakeLayer = L.polygon(lakes.map((r) => [toLatLngs(r)]), { ...opt, stroke: true, weight: 0.8, fill: true, fillRule: 'nonzero' });
-    S.riverLayers = RIVER_TIERS.map((t, i) => {
-      const min = i ? RIVER_TIERS[i - 1].max : 0;
-      const lines = rivers.filter((r) => r[0] > min && r[0] <= t.max).map((r) => toLatLngs(r.slice(1)));
-      return Object.assign(L.polyline(lines, opt), { tier: t });
-    });
+    S.riverLayers = [];
     S.waterLayers = [S.lakeLayer, ...S.riverLayers];
     styleWater();
     S.lakeLayer.addTo(S.map);
@@ -1058,7 +1055,7 @@ function buildMenu() {
     ${tog('values', 'Números en rejilla', S.values)}
     ${tog('relief', 'Relieve del terreno', S.relief)}
     ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
-    ${tog('water', 'Ríos, lagos y embalses', S.water)}
+    ${tog('water', 'Lagos y embalses', S.water)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>

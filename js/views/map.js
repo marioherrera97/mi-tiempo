@@ -108,7 +108,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), iso: load('map.iso', 'pressure'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -440,6 +440,48 @@ function styleBorders() {
   S.regionLines.setStyle({ color: ink, weight: 0.9, opacity: 0.5 });
 }
 
+// ---------- Ríos, lagos y embalses en tono oscuro sobre los colores (como en Windy) ----------
+// Natural Earth 10m (pipeline/hydro.py). Los ríos aparecen por importancia según el zoom.
+const RIVER_TIERS = [{ max: 4, zoom: 3, weight: 1.3 }, { max: 7, zoom: 5, weight: 1 }, { max: 99, zoom: 7, weight: 0.8 }];
+async function showWater() {
+  if (S.waterLayers) S.waterLayers.forEach((l) => S.map.removeLayer(l));
+  S.waterLayers = null;
+  if (!S.water) return;
+  try {
+    const [lakes, rivers] = await Promise.all([geoData('lakes'), geoData('rivers')]);
+    if (!S.water || S.waterLayers) return;
+    const renderer = L.canvas({ pane: 'waterPane', padding: 0.4 });
+    const opt = { renderer, interactive: false, smoothFactor: 1, lineJoin: 'round', lineCap: 'round' };
+    S.lakeLayer = L.polygon(lakes.map((r) => [toLatLngs(r)]), { ...opt, stroke: true, weight: 0.8, fill: true, fillRule: 'nonzero' });
+    S.riverLayers = RIVER_TIERS.map((t, i) => {
+      const min = i ? RIVER_TIERS[i - 1].max : 0;
+      const lines = rivers.filter((r) => r[0] > min && r[0] <= t.max).map((r) => toLatLngs(r.slice(1)));
+      return Object.assign(L.polyline(lines, opt), { tier: t });
+    });
+    S.waterLayers = [S.lakeLayer, ...S.riverLayers];
+    styleWater();
+    S.lakeLayer.addTo(S.map);
+    toggleRivers();
+  } catch { /* sin conexión: sin ríos */ }
+}
+// Oscuros sobre los colores del modelo; con radar o satélite, azulados sobre el mapa base
+function styleWater() {
+  if (!S.lakeLayer) return;
+  const field = !LAYERS[S.layer].kind;
+  const c = field ? '#06212e' : '#4d8fb3';
+  S.lakeLayer.setStyle({ color: c, opacity: field ? 0.45 : 0.6, fillColor: c, fillOpacity: field ? 0.38 : 0.35 });
+  S.riverLayers.forEach((l) => l.setStyle({ color: c, opacity: field ? 0.5 : 0.6, weight: l.tier.weight }));
+}
+function toggleRivers() {
+  if (!S.riverLayers) return;
+  const z = S.map.getZoom();
+  S.riverLayers.forEach((l) => {
+    const on = z >= l.tier.zoom;
+    if (on && !S.map.hasLayer(l)) l.addTo(S.map);
+    if (!on && S.map.hasLayer(l)) S.map.removeLayer(l);
+  });
+}
+
 // Las provincias solo al acercarse, para no saturar el mapa
 function toggleRegions() {
   if (!S.regionLines) return;
@@ -465,6 +507,7 @@ function applyLayer() {
   showRadarFrame();
   showSat();
   styleBorders();
+  styleWater();
   buildMenu();
   prepareLayer();
   loadData();
@@ -871,6 +914,7 @@ function buildMenu() {
     ${tog('values', 'Números en rejilla', S.values)}
     ${tog('relief', 'Relieve del terreno', S.relief)}
     ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
+    ${tog('water', 'Ríos, lagos y embalses', S.water)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
@@ -895,6 +939,7 @@ function buildMenu() {
     if (name === 'values') { S.values = checked; save('map.values', checked); sideState(); prepareLayer(); }
     if (name === 'relief') { S.relief = checked; save('map.relief', checked); if (checked) S.reliefLayer.addTo(S.map); else S.map.removeLayer(S.reliefLayer); }
     if (name === 'borders') { S.borders = checked; save('map.borders', checked); showBorders(); }
+    if (name === 'water') { S.water = checked; save('map.water', checked); showWater(); }
     if (name === 'cities') {
       S.cities = checked;
       save('map.cities', checked);
@@ -1024,6 +1069,8 @@ export default {
       map.createPane('bordersPane').style.zIndex = 365;
       map.getPane('bordersPane').style.pointerEvents = 'none';
       map.getPane('labelsPane').style.pointerEvents = 'none';
+      // Agua entre los colores (350) y el relieve (356); multiply la oscurece sin tapar el color de debajo
+      Object.assign(map.createPane('waterPane').style, { zIndex: 353, pointerEvents: 'none', mixBlendMode: 'multiply' });
       // Relieve sombreado sobre los colores (se mezcla con ellos como en Windy)
       const relief = map.createPane('reliefPane');
       // Las teselas de Esri son casi blancas: una curva gamma acentúa las sombras sin oscurecer lo llano
@@ -1042,7 +1089,9 @@ export default {
       setBase();
       S.field = new FieldLayer(map);
       showBorders();
+      showWater();
       map.on('zoomend', toggleRegions);
+      map.on('zoomend', toggleRivers);
       geoData('cities').then((c) => { S.baseCities = c; updateCities(); }).catch(() => {});
       map.on('moveend', loadPlaceTiles);
       map.whenReady(() => loadPlaceTiles());

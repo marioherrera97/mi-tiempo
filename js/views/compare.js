@@ -92,7 +92,7 @@ export default {
       };
       sum.innerHTML = `<div class="card-head"><h2>${vk === 'temperature_2m' ? 'Máx/mín' : vk === 'precipitation' ? 'Total diario' : 'Máximo diario'} por modelo</h2></div>
         <div style="overflow-x:auto"><table class="simple"><thead><tr><th>Modelo</th>${dayKeys.map((k) => `<th class="r">${f.dayShort(k)}</th>`).join('')}</tr></thead>
-        <tbody>${datasets.map((ds) => `<tr><td><span style="color:${ds.borderColor}">●</span> ${ds.label}</td>${dayKeys.map((k) => `<td class="r">${agg(ds.data, k)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+        <tbody>${datasets.map((ds) => `<tr><td style="white-space:nowrap"><span style="color:${ds.borderColor}">●</span> ${ds.label}</td>${dayKeys.map((k) => `<td class="r">${agg(ds.data, k)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
     } catch (e) {
       errorBox(sum, e, () => this.render(el));
     }

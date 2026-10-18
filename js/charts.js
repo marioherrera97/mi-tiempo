@@ -29,11 +29,14 @@ const markers = {
       ctx.fillStyle = t.text3;
       ctx.font = '600 11px system-ui, sans-serif';
       ctx.textBaseline = 'top';
-      for (const [i, txt] of opts.labels) {
-        const px = x.getPixelForValue(i);
-        if (px < a.left - 2 || px > a.right - 20) continue;
+      // Si un día empieza tan cerca del siguiente que sus nombres se pisarían, se omite el primero
+      const pos = opts.labels.map(([i, txt]) => [x.getPixelForValue(i), txt]);
+      pos.forEach(([px, txt], k) => {
+        if (px < a.left - 2 || px > a.right - 20) return;
+        const next = pos[k + 1]?.[0];
+        if (next !== undefined && next - px < ctx.measureText(txt).width + 10) return;
         ctx.fillText(txt, px + 4, a.top + 2);
-      }
+      });
     }
     if (opts.now !== undefined && opts.now !== null) {
       const px = x.getPixelForValue(opts.now);

@@ -39,9 +39,9 @@ body.map-mode { background: #2b2b2b; }
 .w-top .w-status { position: absolute; left: 0; right: 0; top: 100%; }
 
 /* Botones laterales y botón rojo de menú */
-.w-side { position: absolute; z-index: 900; right: 12px; bottom: calc(var(--w-bottom-h) + var(--safe-b) + 92px); display: flex; flex-direction: column; gap: 12px; }
-.w-side button { width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; background: rgba(38,38,38,.72); box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-.w-side svg { width: 28px; height: 28px; fill: #fff; }
+.w-side { position: absolute; z-index: 900; right: 15px; bottom: calc(var(--w-bottom-h) + var(--safe-b) + 92px); display: flex; flex-direction: column; gap: 10px; }
+.w-side button { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(38,38,38,.72); box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.w-side svg { width: 25px; height: 25px; fill: #fff; }
 .w-side button.on svg { fill: #ffc62e; }
 .w-menu-btn { position: absolute; z-index: 950; right: 10px; bottom: calc(var(--w-bottom-h) + var(--safe-b) + 18px); width: 66px; height: 66px; border-radius: 50%; background: var(--w-red); display: grid; place-items: center; box-shadow: 0 3px 12px rgba(0,0,0,.5); border: 2px solid rgba(255,255,255,.18); }
 .w-menu-btn svg { width: 36px; height: 36px; fill: #fff; }
@@ -152,3 +152,13 @@ body.map-mode { background: #2b2b2b; }
 .wd-src { margin: 3px 10px 0; font-size: 10.5px; color: #ffd27a; }
 
 .w-day.narrow { font-size: 13px; }
+
+/* Burbuja con el valor junto al punto elegido */
+.pin-val { position: absolute; left: 22px; top: -30px; white-space: nowrap; background: rgba(255,255,255,.95); color: #1b1b1b; font-size: 14px; font-weight: 600; line-height: 1; padding: 6px 9px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.45); pointer-events: none; }
+.pin-val::after { content: ''; position: absolute; left: -5px; bottom: 4px; border: 6px solid transparent; border-left: 0; border-right-color: rgba(255,255,255,.95); }
+.pin-val small { font-size: 11px; font-weight: 500; opacity: .75; }
+.pin-val svg { width: 12px; height: 12px; vertical-align: -1px; fill: currentColor; }
+/* Créditos plegados en una «i» */
+.leaflet-control-attribution.folded { width: 18px; height: 18px; padding: 0 !important; overflow: hidden; border-radius: 50%; color: transparent !important; cursor: pointer; position: relative; }
+.leaflet-control-attribution.folded * { visibility: hidden; }
+.leaflet-control-attribution.folded::before { content: 'i'; position: absolute; inset: 0; display: grid; place-items: center; color: #ddd; font: italic 600 12px Georgia, serif; }

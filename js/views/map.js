@@ -526,7 +526,8 @@ async function loadRadar() {
     showRadarFrame();
     updateSlider();
   } catch (e) {
-    setStatus('Radar no disponible: ' + e.message, 'error');
+    // Solo se avisa si se está viendo el radar
+    if (LAYERS[S.layer].kind === 'radar') setStatus('Radar no disponible: ' + e.message, 'error');
   }
 }
 function showRadarFrame() {
@@ -841,6 +842,12 @@ function updatePicker() {
   const sub = spec.kind ? 'modelo ' + model : `${model}, ${spec.levels ? LEVELS[S.level].label : 'Superficie'}`;
   box.querySelector('.wp-label').innerHTML = `<b>${v.label}</b><small>${sub}</small>`;
   box.querySelector('.wp-val').innerHTML = `${v.val}<small>${v.unit}</small>${v.dir !== null ? `<span class="wp-dir">${f.arrow(v.dir)}${f.dirName(v.dir)}</span>` : ''}`;
+  // Burbuja con el valor junto al punto, como en Windy
+  const bubble = S.marker.getElement()?.querySelector('.pin-val');
+  if (bubble) {
+    bubble.innerHTML = `${v.dir !== null ? f.arrow(v.dir) + ' ' : ''}${v.val} <small>${v.unit}</small>`;
+    bubble.classList.remove('hidden');
+  }
 }
 
 function pickAt(latlng) {
@@ -858,6 +865,7 @@ function pickAt(latlng) {
 }
 function closePicker() {
   S.pick = null;
+  S.marker.getElement()?.querySelector('.pin-val')?.classList.add('hidden');
   el('wPicker').classList.add('hidden');
   el('wSearch').classList.remove('hidden');
 }
@@ -1097,7 +1105,14 @@ export default {
       map.whenReady(() => loadPlaceTiles());
       updatePlaces();
       on('favorites', updatePlaces);
-      S.marker = L.marker([state.place.lat, state.place.lon], { icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16, 16] }) }).addTo(map);
+      // El punto se puede arrastrar: el valor de la burbuja cambia mientras se mueve
+      S.marker = L.marker([state.place.lat, state.place.lon], { draggable: true, autoPan: true, icon: L.divIcon({ className: '', html: '<div class="pin"></div><div class="pin-val hidden"></div>', iconSize: [16, 16] }) }).addTo(map);
+      S.marker.on('drag', () => { S.pick = S.marker.getLatLng(); updatePicker(); });
+      S.marker.on('dragend', () => pickAt(S.marker.getLatLng()));
+      // Créditos del mapa plegados en una «i» para que no tapen la hora
+      const attr = map.attributionControl.getContainer();
+      attr.classList.add('folded');
+      attr.addEventListener('click', (e) => { if (e.target.tagName !== 'A') attr.classList.toggle('folded'); });
       map.on('moveend', loadDebounced);
       map.on('moveend', () => save('map.view', [map.getCenter().lat, map.getCenter().lng, map.getZoom()]));
       // Un toque elige el punto; si llega un segundo toque (doble toque = zoom) se cancela

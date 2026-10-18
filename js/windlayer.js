@@ -152,6 +152,8 @@ export class FieldLayer {
     for (let x = 0; x < w; x++) lonOfX[x] = map.containerPointToLatLng([x - ox, 0]).lng;
     for (let y = 0; y < h; y++) latOfY[y] = map.containerPointToLatLng([0, y - oy]).lat;
     this.geo = { w, h, ox, oy, lonOfX, latOfY };
+    this._origin = topLeft.add(map.getPixelOrigin()); // esquina del lienzo en píxeles absolutos del mundo
+    this._zoom = map.getZoom();
     this.bounds = L.latLngBounds(map.containerPointToLatLng([-ox, h - oy]), map.containerPointToLatLng([w - ox, -oy]));
     this._buildMask();
   }
@@ -161,20 +163,18 @@ export class FieldLayer {
     return [p.x + this.geo.ox, p.y + this.geo.oy];
   }
 
-  _animateZoom(e) {
-    if (!this.bounds) return;
-    const scale = this.map.getZoomScale(e.zoom);
-    const offset = this.map._latLngBoundsToNewLayerBounds(this.bounds, e.zoom, e.center).min;
+  // Escala y mueve los lienzos para seguir al mapa durante el zoom. Se calcula en píxeles y no
+  // con las coordenadas de las esquinas, que con el mapa alejado quedan fuera del mundo y desplazaban los colores.
+  _transformTo(center, zoom) {
+    if (!this.geo || !this._origin) return;
+    const map = this.map;
+    const scale = map.getZoomScale(zoom, this._zoom);
+    const offset = this._origin.multiplyBy(scale).subtract(map._getNewPixelOrigin(center, zoom));
     for (const c of this.canvases) L.DomUtil.setTransform(c, offset, scale);
   }
-  // Durante el pellizco (zoom táctil) escala los lienzos para que sigan al mapa
-  _scaleToView() {
-    if (!this.bounds || !this.geo) return;
-    const nw = this.map.latLngToLayerPoint(this.bounds.getNorthWest());
-    const se = this.map.latLngToLayerPoint(this.bounds.getSouthEast());
-    const scale = (se.x - nw.x) / this.geo.w;
-    for (const c of this.canvases) L.DomUtil.setTransform(c, nw, scale);
-  }
+  _animateZoom(e) { this._transformTo(e.center, e.zoom); }
+  // Durante el pellizco (zoom táctil)
+  _scaleToView() { this._transformTo(this.map.getCenter(), this.map.getZoom()); }
 
   redraw() {
     if (!this.map._loaded) return;

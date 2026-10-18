@@ -128,12 +128,18 @@ export class FieldLayer {
     const ox = Math.round(size.x * PAD), oy = Math.round(size.y * PAD);
     const w = size.x + 2 * ox, h = size.y + 2 * oy;
     const topLeft = map.containerPointToLayerPoint([-ox, -oy]);
+    // Textos y partículas a la resolución real de la pantalla (nítidos en móviles); los colores a 1x (son suaves)
+    const dpr = window.devicePixelRatio || 1;
+    const ratios = new Map([[this.fieldCanvas, 1], [this.windCanvas, Math.min(dpr, 2)], [this.isoCanvas, Math.min(dpr, 3)]]);
     for (const c of this.canvases) {
+      const d = ratios.get(c);
       L.DomUtil.setPosition(c, topLeft);
-      if (c.width !== w || c.height !== h) {
-        c.width = w; c.height = h;
+      const W = Math.round(w * d), H = Math.round(h * d);
+      if (c.width !== W || c.height !== H) {
+        c.width = W; c.height = H;
         c.style.width = w + 'px'; c.style.height = h + 'px';
       }
+      c.dpr = d;
     }
     // En Web Mercator la longitud solo depende de x y la latitud solo de y
     const lonOfX = new Float32Array(w);
@@ -252,7 +258,8 @@ export class FieldLayer {
     const c = this.isoCanvas, geo = this.geo;
     if (!geo) return;
     const ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.setTransform(c.dpr || 1, 0, 0, c.dpr || 1, 0, 0);
+    ctx.clearRect(0, 0, geo.w, geo.h);
     const g = this.grid || { vars: {} };
     if (this.style.iso && g.vars[this.style.iso.var]) this._isolines(ctx, this.style.iso);
     if (this.style.cities && this.cities) this._cityLabels(ctx);
@@ -277,7 +284,18 @@ export class FieldLayer {
     };
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.lineJoin = 'round';
+    const shadow = 3.5 * (this.isoCanvas.dpr || 1);
+    const FONT_NAME = (mine) => `${mine ? 700 : 600} 12px Roboto, "Segoe UI", system-ui, sans-serif`;
+    const FONT_VAL = '700 15px Roboto, "Segoe UI", system-ui, sans-serif';
+    // Texto blanco con halo difuso (dos pasadas de sombra), como las etiquetas de Windy
+    const soft = (txt, x, y) => {
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = shadow;
+      ctx.fillText(txt, x, y);
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.fillText(txt, x, y);
+      ctx.shadowBlur = 0;
+    };
     const draw = (name, lat, lon, mine) => {
       const [x, y0] = this._toCanvas(lat, lon);
       const y = mine ? y0 + 26 : y0; // los lugares propios, debajo del marcador
@@ -287,23 +305,19 @@ export class FieldLayer {
         const v = this.sample(cfg.var, lat, lon);
         if (v !== null && !(this.style.mask && this.landAlpha?.[((y | 0) * geo.w + (x | 0)) * 4 + 3])) val = cfg.fmt(v) || '';
       }
-      ctx.font = `${mine ? 700 : 600} 11.5px system-ui, sans-serif`;
+      ctx.font = FONT_NAME(mine);
       const wName = ctx.measureText(name).width;
-      ctx.font = '800 14px system-ui, sans-serif';
+      ctx.font = FONT_VAL;
       const wVal = val ? ctx.measureText(val).width : 0;
-      const w = Math.max(wName, wVal) + 6, h = val ? 32 : 17;
+      const w = Math.max(wName, wVal) + 8, h = val ? 34 : 18;
       if (!fits(x - w / 2, y - 14, w, h)) return false;
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.font = `${mine ? 700 : 600} 11.5px system-ui, sans-serif`;
-      ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.92)';
-      ctx.strokeText(name, x, y);
-      ctx.fillText(name, x, y);
+      ctx.font = FONT_NAME(mine);
+      ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.95)';
+      soft(name, x, y);
       if (val) {
-        ctx.font = '800 14px system-ui, sans-serif';
-        ctx.fillStyle = '#fff';
-        ctx.strokeText(val, x, y + 15);
-        ctx.fillText(val, x, y + 15);
+        ctx.font = FONT_VAL;
+        ctx.fillStyle = '#ffffff';
+        soft(val, x, y + 16);
       }
       return true;
     };
@@ -416,29 +430,28 @@ export class FieldLayer {
     }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = 4 * (this.isoCanvas.dpr || 1);
     for (const [x, y, k, v] of found.slice(0, 16)) {
-      ctx.font = '800 22px system-ui, sans-serif';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.strokeText(k, x, y);
+      ctx.font = '800 22px Roboto, "Segoe UI", system-ui, sans-serif';
       ctx.fillStyle = k === 'A' ? '#ff6b6b' : '#5bb8ff';
       ctx.fillText(k, x, y);
-      ctx.font = '600 11px system-ui, sans-serif';
-      ctx.strokeText(iso.fmt(v), x, y + 17);
+      ctx.font = '600 11px Roboto, "Segoe UI", system-ui, sans-serif';
       ctx.fillStyle = '#fff';
       ctx.fillText(iso.fmt(v), x, y + 17);
     }
+    ctx.shadowBlur = 0;
   }
 
   _values(ctx, val) {
     const geo = this.geo;
     const step = 78;
-    ctx.font = '700 12px system-ui, sans-serif';
+    ctx.font = '700 12.5px Roboto, "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
     ctx.fillStyle = '#fff';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 3 * (this.isoCanvas.dpr || 1);
     // Rejilla anclada a la pantalla para que los números no bailen al soltar el mapa
     const x0 = (geo.ox % step) + step / 2, y0 = (geo.oy % step) + step / 2;
     for (let y = y0; y < geo.h - 10; y += step) {
@@ -448,17 +461,19 @@ export class FieldLayer {
         if (this.style.mask && this.landAlpha?.[((y | 0) * geo.w + (x | 0)) * 4 + 3]) continue;
         const txt = val.fmt(v);
         if (!txt) continue;
-        ctx.strokeText(txt, x, y);
         ctx.fillText(txt, x, y);
       }
     }
+    ctx.shadowBlur = 0;
   }
 
   // ---------- Partículas ----------
   clearParticles() {
     this.stop();
     const c = this.windCanvas;
-    c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
   }
 
   startParticles() {
@@ -466,7 +481,9 @@ export class FieldLayer {
     const geo = this.geo;
     if (!geo) return;
     const c = this.windCanvas;
-    c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    const cctx = c.getContext('2d');
+    cctx.setTransform(1, 0, 0, 1, 0, 0);
+    cctx.clearRect(0, 0, c.width, c.height);
     const flow = this.style.flow;
     if (!this.grid || !this.showParticles || !flow || !this.grid.vars[flow.u]) return;
     // Densidad constante en pantalla (el lienzo incluye el margen)
@@ -497,6 +514,8 @@ export class FieldLayer {
     const ctx = this.windCanvas.getContext('2d');
     const g = this.geo;
     const flow = this.style.flow;
+    const d = this.windCanvas.dpr || 1;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
     ctx.globalCompositeOperation = 'destination-in';
     ctx.fillStyle = 'rgba(0,0,0,0.92)';
     ctx.fillRect(0, 0, g.w, g.h);

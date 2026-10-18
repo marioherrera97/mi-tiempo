@@ -2,7 +2,11 @@
 Natural Earth 10m (dominio público), simplificados para que pesen poco.
 
 Uso:
-    python pipeline/hydro.py carpeta_con_geojson vendor
+    python pipeline/hydro.py carpeta_con_geojson vendor [osm.json]
+
+Si se pasa osm.json (respuesta «out geom» de Overpass, ver .github/workflows/hydro.yml), los
+embalses y lagos de OpenStreetMap sustituyen a los de Natural Earth dentro de OSM_BBOX, donde
+Natural Earth se queda corto (faltan Mequinenza, Alqueva y muchos más).
 
 La carpeta debe contener ne_10m_lakes, ne_10m_lakes_europe, ne_10m_rivers_lake_centerlines
 y ne_10m_rivers_europe en GeoJSON (github.com/nvkelso/natural-earth-vector/tree/master/geojson).
@@ -66,14 +70,74 @@ def lines(geom):
     return []
 
 
-def main(src, dst):
+OSM_BBOX = (-9.9, 35.8, 4.6, 44.0)  # España y Portugal (lon_min, lat_min, lon_max, lat_max)
+
+
+def inside(ring, box):
+    x = sum(p[0] for p in ring) / len(ring)
+    y = sum(p[1] for p in ring) / len(ring)
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+
+def stitch(ways):
+    """Une los tramos exteriores de una relación multipolígono en anillos cerrados."""
+    ways = [w[:] for w in ways if len(w) >= 2]
+    rings = []
+    while ways:
+        ring = ways.pop(0)
+        changed = True
+        while ring[0] != ring[-1] and changed:
+            changed = False
+            for i, w in enumerate(ways):
+                if w[0] == ring[-1]:
+                    ring += w[1:]
+                elif w[-1] == ring[-1]:
+                    ring += w[::-1][1:]
+                elif w[-1] == ring[0]:
+                    ring = w[:-1] + ring
+                elif w[0] == ring[0]:
+                    ring = w[::-1][:-1] + ring
+                else:
+                    continue
+                ways.pop(i)
+                changed = True
+                break
+        if ring[0] == ring[-1] and len(ring) >= 4:
+            rings.append(ring)
+    return rings
+
+
+def osm_rings(path):
+    for el in json.load(open(path))['elements']:
+        pt = lambda g: (g['lon'], g['lat'])
+        if el['type'] == 'way' and 'geometry' in el:
+            yield [pt(g) for g in el['geometry']]
+        elif el['type'] == 'relation':
+            outer = [[pt(g) for g in m['geometry']] for m in el.get('members', [])
+                     if m.get('role') == 'outer' and 'geometry' in m]
+            yield from stitch(outer)
+
+
+def main(src, dst, osm=None):
     src, dst = Path(src), Path(dst)
     lakes = []
+    if osm:
+        n = 0
+        for ring in osm_rings(osm):
+            if extent(ring) < 0.02:  # menos de ~2 km
+                continue
+            s = simplify(ring, 0.003)
+            if len(s) >= 4:
+                lakes.append(flat(s[:-1] if s[0] == s[-1] else s))
+                n += 1
+        print(f'OpenStreetMap: {n} embalses y lagos')
     for name in ('ne_10m_lakes', 'ne_10m_lakes_europe'):
         for f in json.load(open(src / f'{name}.geojson'))['features']:
             for ring in lines(f['geometry']):
                 ring = [p[:2] for p in ring]
                 if extent(ring) < 0.06:  # menos de ~6 km: no se ve
+                    continue
+                if osm and inside(ring, OSM_BBOX):
                     continue
                 s = simplify(ring, 0.012)
                 if len(s) >= 4:
@@ -94,4 +158,4 @@ def main(src, dst):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:4])

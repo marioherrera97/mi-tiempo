@@ -219,7 +219,7 @@ function renderReservoirs(box, d, sh) {
         <div class="rv-top"><b>${f.esc(stationName(L.name))}</b><span class="rv-n">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(L.basin)}</span><span class="rv-pct" style="color:${fillColor(L.pct)}">${Math.round(L.pct)} %</span></div>
         ${bar(L.pct)}
         <div class="rv-sub"><span>${hm3(L.vol)} · ${f.esc(L.src)}, ${liveTime(L)}</span>${f.isNum(L.d24) ? `<span>24 h ${delta(L.d24)}</span>` : ''}</div></div>`).join('')}</div>
-      <p class="note rv-livenote">${sh.reservoirs.length} embalses con dato en tiempo real en toda España (redes SAIH, ACA e Hidrosur). Los del Segura, el Cantábrico, Galicia Costa y el País Vasco solo tienen el boletín semanal.</p>` : ''}
+      <p class="note rv-livenote">${sh.reservoirs.length} embalses con dato en tiempo real en toda España (redes SAIH, ACA e Hidrosur). Los del Cantábrico, Galicia Costa y el País Vasco solo tienen el boletín semanal.</p>` : ''}
     <div class="section-title">Por cuencas</div>
     <div class="card rv-list">${d.basins.map((b, i) => {
       const bp = pc(b.cur, b.cap);
@@ -375,7 +375,7 @@ export default {
     el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
-      Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar, Miño-Sil y Segura (solo lluvia), ACA, Hidrosur y MeteoGalicia.
+      Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar, Miño-Sil y Segura (Confederación Hidrográfica del Segura), ACA, Hidrosur y MeteoGalicia.
       Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData y las redes anteriores.
       Lluvia del año: Open-Meteo y ERA5 (Copernicus).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');

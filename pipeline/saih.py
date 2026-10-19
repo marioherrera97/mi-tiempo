@@ -14,8 +14,8 @@ Fuentes (todas públicas; datos provisionales sin validar):
 - ACA (Cataluña, cuencas internas): API de sensores (lluvia cada 5 min y embalses).
 - Hidrosur (Junta de Andalucía: Mediterránea Andaluza, Guadalete-Barbate y Tinto-Odiel).
 - MeteoGalicia: lluvia horaria de sus estaciones.
-- SAIH Segura: lluvia de 1 a 24 h de sus pluviómetros desde el servicio ArcGIS público de su visor. El volumen
-  de sus embalses solo está en su iVisor, que pide aceptar unas condiciones, así que no se usa.
+- SAIH Segura: lluvia de 1 a 24 h de sus pluviómetros desde el servicio ArcGIS público de su visor, y volumen
+  de los embalses de su iVisor (sus condiciones de uso, aceptadas por el usuario, piden citar a la CHS como fuente).
 Sin fuente usable: SAI Cantábrico (código ofuscado para que no se lea desde fuera), Galicia Costa y País Vasco
 (no publican el volumen en tiempo real). Sus embalses siguen saliendo con el boletín semanal.
 
@@ -604,7 +604,15 @@ def fetch_segura(state):
         p = [a.get('LluviaUltimaHora'), a.get('LluviaUltimas6Horas'), a.get('LluviaUltimas12Horas'), a.get('LluviaUltimas24Horas')]
         p = [round(v, 1) if isinstance(v, (int, float)) and v >= 0 else None for v in p]
         gauges.append(gauge(f'S-{a["CodVariableHidrologica"]}', name, g['y'], g['x'], p, t, 'SAIH Segura'))
-    return gauges, []
+    # Embalses: tabla del iVisor (el usuario aceptó sus condiciones de uso: citar a la CHS como fuente)
+    page = retry(lambda: http('https://saihweb.chsegura.es/apps/iVisor/inicial_ajax.php', {'action': 'Embalses'}, timeout=60, form=True))
+    txt = re.sub(r'\s+', ' ', htmlmod.unescape(re.sub(r'<[^>]+>', ' ', page)))
+    reservoirs = []
+    for name, _cota, _h, vol, pct in re.findall(r'(?:E\.\s?|Azud\s)([^()]+?)\s*\(([\d.,]+)\)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)', txt):
+        vol, pct = num(vol), num(pct)
+        if vol and vol > 0.5:
+            reservoirs.append(reservoir(name.strip(), 'Segura', vol, pct, t, 'SAIH Segura'))
+    return gauges, reservoirs
 
 
 # ---------- MeteoGalicia ----------

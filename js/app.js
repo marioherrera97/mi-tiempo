@@ -16,12 +16,17 @@ import air from './views/air.js';
 import history from './views/history.js';
 import reservoirs from './views/reservoirs.js';
 import settingsView from './views/settings.js';
+import rainrank from './views/rainrank.js';
+import activities from './views/activities.js';
+import alerts, { initAlerts } from './views/alerts.js';
+import relief from './views/relief.js';
 
 const VIEWS = {
   inicio: home, horas: hourly, mapa: map, tendencia: trend, mas: more,
   modelos: compare, mar: marine, aire: air, historico: history, embalses: reservoirs, ajustes: settingsView,
+  lluvia: rainrank, planes: activities, avisos: alerts, relieve: relief,
 };
-const PARENT_TAB = { modelos: 'mas', mar: 'mas', aire: 'mas', historico: 'mas', embalses: 'mas', ajustes: 'mas' };
+const PARENT_TAB = { modelos: 'mas', mar: 'mas', aire: 'mas', historico: 'mas', embalses: 'mas', ajustes: 'mas', lluvia: 'mas', planes: 'mas', avisos: 'mas', relieve: 'mas' };
 
 let current = null;
 const dirty = new Set(Object.keys(VIEWS));
@@ -165,6 +170,7 @@ function init() {
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => reg.update()).catch(() => {});
   }
+  initAlerts();
 }
 
 init();

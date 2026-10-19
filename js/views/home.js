@@ -7,6 +7,7 @@ import { wxIcon, wxDesc, moonPhase, moonSvg } from '../icons.js';
 import { css, aqiLevel } from '../colors.js';
 import { loading, errorBox, openSheet, $ } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
+import { outfit, figure } from '../outdoor.js';
 
 export function nowIndex(d) {
   const key = (d.current?.time || f.placeNow(d.utc_offset_seconds)).slice(0, 13);
@@ -175,6 +176,56 @@ function sunMoon(d) {
   </div>`;
 }
 
+// ---------- ¿Qué me pongo? (mañana, mediodía y noche, según la sensación térmica) ----------
+function wearCard(d) {
+  const h = d.hourly;
+  const now = d.current.time;
+  // Después de las 21 h se enseña el día siguiente
+  const day = now.slice(11, 13) >= '21' ? f.addDays(now.slice(0, 10), 1) : now.slice(0, 10);
+  const moments = [['Mañana', '08'], ['Mediodía', '14'], ['Noche', '21']]
+    .map(([n, hr]) => [n, hr, h.time.indexOf(`${day}T${hr}:00`)]).filter(([, , i]) => i >= 0);
+  if (!moments.length) return '';
+  return `<div class="card">
+    <div class="card-head"><h2>¿Qué me pongo?</h2><span class="tiny">${f.dayName(day, now.slice(0, 10))}</span></div>
+    <div class="wear">${moments.map(([n, hr, i]) => {
+      const o = outfit(h, i);
+      const past = day === now.slice(0, 10) && +hr + 2 < +now.slice(11, 13);
+      return `<div class="wear-m${past ? ' past' : ''}">
+        <span class="wear-h">${n} <small>${hr} h</small></span>
+        ${figure(o)}
+        <b class="num">${f.temp(o.a)}</b><small class="muted">sensación</small>
+        <span class="wear-t">${o.text}${o.extras.length ? `<em>+ ${o.extras.join(', ')}</em>` : ''}</span>
+      </div>`;
+    }).join('')}</div>
+  </div>`;
+}
+
+// ---------- Atardecer: ¿será espectacular? ----------
+async function sunsetCard(el) {
+  try {
+    const r = await api.sunsetClouds(state.place);
+    const list = globalThis.MTAlerts.sunsets(r).filter((s) => !s.past).slice(0, 3);
+    if (!list.length) { el.innerHTML = ''; return; }
+    const today = f.placeNow((Array.isArray(r) ? r[0] : r).utc_offset_seconds || 0).slice(0, 10);
+    const col = (s) => (s >= 7.5 ? '#ff7a3d' : s >= 5.5 ? '#ffb547' : s >= 3.5 ? '#e9c13b' : '#74829a');
+    const why = (s) => {
+      const canvas = Math.max(s.mid, s.high);
+      const a = canvas < 8 ? 'cielo limpio, sin nubes que se tiñan' : canvas > 85 ? 'muy cubierto' : `nubes medias y altas al ${Math.round(canvas)} %`;
+      const b = s.low > 50 ? 'nubes bajas encima' : s.lowW > 45 || s.lowFar > 55 ? 'nubes bajas hacia el oeste tapan el sol' : 'horizonte oeste despejado';
+      return `${a} · ${b}${s.rain >= 0.2 ? ' · lluvia' : ''}`;
+    };
+    el.innerHTML = `<div class="card">
+      <div class="card-head"><h2>Atardeceres</h2><a href="#/avisos?nuevo=atardecer" class="small">Avisarme →</a></div>
+      ${list.map((s) => `<div class="ss-row">
+        <span class="ss-score" style="--c:${col(s.score)}">${s.score.toFixed(1).replace('.', ',')}</span>
+        <span class="ss-main"><b>${f.dayName(s.day, today)} · ${s.label}</b><small>${f.hhmm(s.time)} · ${why(s)}</small></span>
+        <span class="ss-bar"><i style="width:${s.score * 10}%;background:${col(s.score)}"></i></span>
+      </div>`).join('')}
+      <p class="note" style="margin:8px 0 0">Un atardecer es espectacular con nubes medias o altas encima (se tiñen de rojo) y el horizonte del oeste despejado de nubes bajas, por donde entra la luz. Se miran las nubes aquí y a 60 y 160 km hacia donde se pone el sol.</p>
+    </div>`;
+  } catch { el.innerHTML = ''; }
+}
+
 async function airCard(el) {
   try {
     const a = await api.airQuality(state.place);
@@ -246,15 +297,18 @@ export default {
         ${hero(d)}
         ${nowcast(d)}
         ${hourStrip(d, ni)}
+        ${wearCard(d)}
         ${dailyList(d)}
         <div class="grid-wide">
           <div class="card"><div class="card-head"><h2>Detalles ahora</h2></div>${stats(d, ni)}</div>
           ${sunMoon(d)}
         </div>
+        <div id="homeSunset" style="margin-top:12px"></div>
         <div id="homeAir" style="margin-top:12px"></div>
         <p class="footer-note">${d.source === 'met' ? 'Fuente: <b>MET Noruega</b> (respaldo: Open-Meteo no disponible ahora)' : 'Modelo: ' + api.modelName(settings.model)} · Altitud ${Math.round(d.elevation)} m<br>
         Actualizado ${f.relTime(lastUpdate)} · Datos: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0)</p>`;
       el.querySelectorAll('.drow').forEach((b) => { b.onclick = () => openDay(d, +b.dataset.day); });
+      sunsetCard(el.querySelector('#homeSunset'));
       airCard(el.querySelector('#homeAir'));
     } catch (e) {
       errorBox(el, e, () => this.render(el));

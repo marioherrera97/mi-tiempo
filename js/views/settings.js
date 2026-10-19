@@ -44,7 +44,7 @@ export default {
     }
     el.querySelector('#setModel').append(selectEl(MODELS.map((m) => [m.id, m.name]), settings.model, (v) => { settings.model = v; saveSettings(); toast('Modelo cambiado'); }));
     el.querySelector('#clearCache').onclick = async () => {
-      if ('caches' in window) for (const k of await caches.keys()) if (!k.startsWith('shell')) await caches.delete(k);
+      if ('caches' in window) for (const k of await caches.keys()) if (!k.startsWith('shell') && k !== 'mitiempo-avisos') await caches.delete(k);
       toast('Caché borrada');
     };
     el.querySelector('#resetSet').onclick = () => { Object.assign(settings, DEFAULT_SETTINGS); applyTheme(); saveSettings(); toast('Ajustes restablecidos'); };

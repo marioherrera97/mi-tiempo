@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v54';
+const VERSION = 'v55';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -11,10 +11,30 @@ const SHELL_FILES = [
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/state.js', 'js/api.js', 'js/data.js', 'js/format.js', 'js/icons.js', 'js/colors.js',
   'js/charts.js', 'js/ui.js', 'js/select.js', 'js/windlayer.js', 'js/owndata.js', 'js/metno.js', 'js/thumbs.js',
+  'js/alertcheck.js', 'js/outdoor.js', 'js/resforecast.js',
   'js/views/home.js', 'js/views/hourly.js', 'js/views/map.js', 'js/views/trend.js',
   'js/views/more.js', 'js/views/compare.js', 'js/views/marine.js', 'js/views/air.js',
   'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js', 'js/views/reservoirs.js',
+  'js/views/rainrank.js', 'js/views/activities.js', 'js/views/alerts.js', 'js/views/relief.js',
 ];
+
+// Avisos personalizados: el mismo código que usa la página
+importScripts('js/alertcheck.js');
+
+// Comprobación periódica en segundo plano (Chrome/Edge para Android con la app instalada)
+self.addEventListener('periodicsync', (e) => {
+  if (e.tag === 'mitiempo-avisos') e.waitUntil(self.MTAlerts.run(self.registration).catch(() => {}));
+});
+// Al tocar una notificación se abre la app (o se enfoca si ya está abierta)
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || './', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const c = list.find((w) => w.url.startsWith(self.registration.scope));
+    if (c) { c.navigate(url).catch(() => {}); return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
+});
 
 self.addEventListener('install', (e) => {
   // cache: 'reload' evita guardar copias viejas de la caché HTTP del navegador
@@ -24,7 +44,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => ![SHELL, DATA, TILES, ECMWF].includes(k)).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => ![SHELL, DATA, TILES, ECMWF, 'mitiempo-avisos'].includes(k)).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });

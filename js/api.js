@@ -247,6 +247,20 @@ export async function rainPast(p) {
   return getJSON(url, { ttl: 30 * 60e3 });
 }
 
+// ---------- Balance de agua del suelo: lluvia y evapotranspiración de 30 días atrás a 7 adelante ----------
+export async function soilWater(p) {
+  const url = build('https://api.open-meteo.com/v1/forecast', {
+    ...coord(p), timezone: 'auto', past_days: 30, forecast_days: 8,
+    daily: ['precipitation_sum', 'et0_fao_evapotranspiration'], hourly: 'soil_moisture_3_to_9cm',
+  });
+  return getJSON(url, { ttl: 60 * 60e3 });
+}
+
+// ---------- Atardeceres: el lugar y dos puntos hacia el oeste (js/alertcheck.js) ----------
+export async function sunsetClouds(p) {
+  return getJSON(globalThis.MTAlerts.sunsetURL(+p.lat.toFixed(3), +p.lon.toFixed(3)), { ttl: 60 * 60e3 });
+}
+
 // ---------- Histórico (ERA5 desde 1940) ----------
 export async function archive(p, start, end, daily, opts = {}) {
   const url = build('https://archive-api.open-meteo.com/v1/archive', {

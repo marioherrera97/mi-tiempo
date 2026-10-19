@@ -7,6 +7,7 @@ import * as f from '../format.js';
 import { loading, errorBox } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
+import { reservoirForecast } from '../resforecast.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
@@ -220,10 +221,10 @@ function spark(series, cap) {
 }
 
 // Fila de un embalse; al tocarla se despliega su detalle
-function resRow(r, basinName, dist, live) {
-  const [name, , cap, cur, prev, year, avg10, elec, , , series] = r;
+function resRow(r, basinName, dist, live, idx) {
+  const [name, , cap, cur, prev, year, avg10, elec, lat, , series] = r;
   const p = pc(cur, cap);
-  return `<details class="rv-res">
+  return `<details class="rv-res"${f.isNum(lat) ? ` data-i="${idx}"` : ''}>
     <summary>
       <div class="rv-top"><b>${f.esc(nice(name))}</b>${elec ? '<span class="rv-tag" title="Uso hidroeléctrico">⚡</span>' : ''}
         ${dist !== undefined ? `<span class="rv-km">${dist < 10 ? dist.toFixed(1).replace('.', ',') : Math.round(dist)} km</span>` : ''}
@@ -240,6 +241,7 @@ function resRow(r, basinName, dist, live) {
         <span>Media 10 años</span><b>${f.isNum(avg10) ? `${p1(pc(avg10, cap))} · ${hm3(avg10)}` : '–'}</b>
         <span>Uso</span><b>${elec ? 'Hidroeléctrico' : 'Consuntivo (riego y abastecimiento)'}</b>
       </div>
+      ${f.isNum(lat) ? '<div class="rv-fc"></div>' : ''}
     </div>
   </details>`;
 }
@@ -273,7 +275,7 @@ function renderReservoirs(box, d, sh) {
     <div class="card"><div class="card-head"><h2>Este año y el anterior</h2><span class="tiny">% de capacidad</span></div>
       <div class="chart-box short"><canvas id="rvChart"></canvas></div></div>
     ${near.length ? `<div class="section-title">Embalses cerca de ${f.esc(here.name)}</div>
-      <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)))).join('')}</div>` : ''}
+      <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)), d.res.indexOf(r))).join('')}</div>` : ''}
     ${sh?.reservoirs?.length ? `<div class="section-title">En tiempo real cerca de ${f.esc(here.name)}</div>
       <div class="card rv-list rv-livelist">${sh.reservoirs.filter((L) => f.isNum(L.lat)).map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow">
         <div class="rv-top"><b>${f.esc(stationName(L.name))}</b><span class="rv-n">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(L.basin)}</span><span class="rv-pct" style="color:${fillColor(L.pct)}">${Math.round(L.pct)} %</span></div>
@@ -290,10 +292,16 @@ function renderReservoirs(box, d, sh) {
           ${bar(bp)}
           <div class="rv-sub"><span>${hm3(b.cur)} de ${hm3(b.cap)} · hace un año ${Math.round(pc(b.year, b.cap))} %</span>${delta(b.cur - b.prev)}</div>
         </summary>
-        <div class="rv-inner">${list.map((r) => resRow(r, b.name, undefined, live.get(d.res.indexOf(r)))).join('')}</div>
+        <div class="rv-inner">${list.map((r) => resRow(r, b.name, undefined, live.get(d.res.indexOf(r)), d.res.indexOf(r))).join('')}</div>
       </details>`;
     }).join('')}</div>
 `;
+
+  // Al abrir un embalse se estima cuánto subirá con la lluvia (se calcula solo entonces: son dos peticiones)
+  box.querySelectorAll('details.rv-res[data-i]').forEach((el) => el.addEventListener('toggle', () => {
+    const fc = el.querySelector('.rv-fc');
+    if (el.open && fc && !fc.dataset.done) { fc.dataset.done = 1; renderForecast(fc, d.res[+el.dataset.i], d.weeks); }
+  }));
 
   // Gráfico: % de la capacidad este año (últimas 53 semanas) frente al año anterior en las mismas semanas
   const th = theme();
@@ -320,6 +328,30 @@ function renderReservoirs(box, d, sh) {
       },
     }),
   });
+}
+
+// ---------- Previsión de subida por la lluvia (js/resforecast.js) ----------
+async function renderForecast(box, r, weeks) {
+  box.innerHTML = '<div class="rv-fc-load"><div class="spinner"></div>Calculando previsión…</div>';
+  try {
+    const m = await reservoirForecast(r, weeks);
+    const conf = m.r2 >= 0.5 ? ['alta', 'var(--ok)'] : m.r2 >= 0.2 ? ['media', 'var(--warm)'] : ['baja', 'var(--danger)'];
+    const responds = m.b > 0 || m.c > 0;
+    const pts = pc(m.change, m.cap);
+    box.innerHTML = `<div class="rv-fc-head">Previsión 7 días <span class="rv-conf" style="color:${conf[1]}">fiabilidad ${conf[0]}</span></div>
+      <div class="rv-fc-main">${delta(m.change)} <span class="muted">→ ${p1(pc(m.after, m.cap))} (${pts >= 0 ? '+' : ''}${pts.toFixed(1).replace('.', ',')} puntos)</span></div>
+      <div class="rv-cmp">
+        <span>Lluvia últimos 7 días</span><b>${f.precip(m.past7, true)}</b>
+        <span>Lluvia prevista 7 días</span><b>${f.precip(m.next7, true)}</b>
+        <span>Aporte por la lluvia</span><b>${responds ? delta(m.rainPart) : 'apenas responde'}</b>
+        <span>Sin lluvia, cada semana</span><b>${delta(m.a)}</b>
+      </div>
+      <p class="note">Estimación con la respuesta del embalse a la lluvia en el último año (${m.n} semanas; la lluvia explica el ${Math.round(m.r2 * 100)} % de sus cambios).
+        ${responds ? `Por cada 10 mm en la zona suele subir unos ${num(10 * (m.b + m.c))} hm³.` : 'La lluvia local apenas explica sus cambios: lo mandan los desembalses o su cuenca está lejos.'}
+        No tiene en cuenta el deshielo, los desembalses previstos ni la lluvia lejos de la presa. Orientativo.</p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="note">No se pudo calcular la previsión (${f.esc(e.message)}).</p>`;
+  }
 }
 
 // ---------- Lluvia caída en el lugar (año hidrológico, desde el 1 de octubre) ----------

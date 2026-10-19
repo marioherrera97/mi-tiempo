@@ -791,16 +791,19 @@ function buildDays() {
     const d = new Date(a);
     const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
     const b = Math.min(next, ms1);
-    blocks.push({ d, w: ((b - a) / 3600e3) * PXH });
+    // Marcas cada 6 h (00, 06, 12, 18) alineadas con la hora real del inicio del bloque
+    const into = (d.getHours() + d.getMinutes() / 60) % 6;
+    blocks.push({ d, w: ((b - a) / 3600e3) * PXH, t0: into ? (6 - into) * PXH : 0 });
     a = b;
   }
   if (!blocks.length) blocks.push({ d: new Date(ms0), w: 0 });
   // Margen de media tira a cada lado para poder llevar cualquier hora al centro
   blocks[0].w += half;
+  blocks[0].t0 += half;
   blocks[blocks.length - 1].w += half;
   box.innerHTML = blocks.map((bl, k) => {
     const label = bl.w > 125 ? `${DAYS_LONG[bl.d.getDay()]} ${bl.d.getDate()}` : bl.w > 58 ? `${DAYS_ES[bl.d.getDay()]} ${bl.d.getDate()}` : bl.w > 22 ? String(bl.d.getDate()) : '';
-    return `<div class="w-day${k % 2 ? ' alt' : ''}" style="width:${bl.w.toFixed(1)}px"><span>${label}</span></div>`;
+    return `<div class="w-day${k % 2 ? ' alt' : ''}" style="width:${bl.w.toFixed(1)}px;--tick:${(6 * PXH).toFixed(2)}px;--tick0:${(bl.t0 || 0).toFixed(1)}px"><span>${label}</span></div>`;
   }).join('');
 }
 

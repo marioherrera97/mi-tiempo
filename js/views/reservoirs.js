@@ -375,7 +375,7 @@ export default {
     el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
-      Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar y Miño-Sil, ACA, Hidrosur y MeteoGalicia.
+      Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar, Miño-Sil y Segura (solo lluvia), ACA, Hidrosur y MeteoGalicia.
       Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData y las redes anteriores.
       Lluvia del año: Open-Meteo y ERA5 (Copernicus).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');

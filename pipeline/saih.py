@@ -14,8 +14,10 @@ Fuentes (todas públicas; datos provisionales sin validar):
 - ACA (Cataluña, cuencas internas): API de sensores (lluvia cada 5 min y embalses).
 - Hidrosur (Junta de Andalucía: Mediterránea Andaluza, Guadalete-Barbate y Tinto-Odiel).
 - MeteoGalicia: lluvia horaria de sus estaciones.
-No se usan: SAIH Segura (pide aceptar unas condiciones antes de ver los datos) y SAI Cantábrico (código
-ofuscado para que no se lea desde fuera). Sus embalses siguen saliendo con el boletín semanal.
+- SAIH Segura: lluvia de 1 a 24 h de sus pluviómetros desde el servicio ArcGIS público de su visor. El volumen
+  de sus embalses solo está en su iVisor, que pide aceptar unas condiciones, así que no se usa.
+Sin fuente usable: SAI Cantábrico (código ofuscado para que no se lea desde fuera), Galicia Costa y País Vasco
+(no publican el volumen en tiempo real). Sus embalses siguen saliendo con el boletín semanal.
 
 Cuando una fuente solo da la lluvia de la última hora, las de 6, 12 y 24 h se suman con lo guardado en el fichero
 de estado de las ejecuciones anteriores. Las coordenadas que no vienen en los listados se piden una vez a la
@@ -585,6 +587,26 @@ def fetch_hidrosur(state):
     return gauges, reservoirs
 
 
+# ---------- SAIH Segura (servicio ArcGIS público de su visor) ----------
+SEGURA = 'https://www.chsegura.es/server/rest/services/VISOR_CHSIC3/VISOR_PUBLICO_ETRS89_v5_Web_Capas/MapServer/13/query'
+
+
+def fetch_segura(state):
+    q = urllib.parse.urlencode({'where': '1=1', 'outFields': '*', 'returnGeometry': 'true', 'outSR': 4326, 'f': 'json'})
+    d = json.loads(retry(lambda: http(f'{SEGURA}?{q}', timeout=90)))
+    t = iso(NOW.replace(minute=0, second=0, microsecond=0))
+    gauges = []
+    for f in d.get('features', []):
+        a, g = f['attributes'], f.get('geometry') or {}
+        if g.get('y') is None:
+            continue
+        name = re.sub(r'^Pluvi[oó]metro\s+(en\s+)?', '', a.get('DenominacionPtoMedicion') or a['CodVariableHidrologica'])
+        p = [a.get('LluviaUltimaHora'), a.get('LluviaUltimas6Horas'), a.get('LluviaUltimas12Horas'), a.get('LluviaUltimas24Horas')]
+        p = [round(v, 1) if isinstance(v, (int, float)) and v >= 0 else None for v in p]
+        gauges.append(gauge(f'S-{a["CodVariableHidrologica"]}', name, g['y'], g['x'], p, t, 'SAIH Segura'))
+    return gauges, []
+
+
 # ---------- MeteoGalicia ----------
 MG = 'https://servizos.meteogalicia.gal/mgrss/observacion/'
 
@@ -650,6 +672,7 @@ SOURCES = [
     ('SAIH Miño-Sil', fetch_minosil),
     ('ACA', lambda s, c: fetch_aca(s)),
     ('Hidrosur', lambda s, c: fetch_hidrosur(s)),
+    ('SAIH Segura', lambda s, c: fetch_segura(s)),
     ('MeteoGalicia', lambda s, c: fetch_galicia(s)),
 ]
 

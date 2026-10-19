@@ -522,19 +522,20 @@ export class FieldLayer {
     };
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    const shadow = 3.5 * (this.isoCanvas.dpr || 1);
-    const FONT_NAME = (mine) => `${mine ? 700 : 500} 11px Roboto, "Segoe UI", system-ui, sans-serif`;
-    const FONT_VAL = '500 12.5px Roboto, "Segoe UI", system-ui, sans-serif';
-    // Texto blanco con halo difuso (dos pasadas de sombra), como las etiquetas de Windy
-    // Contorno negro fino (como Windy) y un halo suave para que se lean sobre cualquier color
+    const dpr = this.isoCanvas.dpr || 1;
+    const FONT_NAME = (mine) => `${mine ? 700 : 600} 12px Roboto, "Segoe UI", system-ui, sans-serif`;
+    const FONT_VAL = '700 12.5px Roboto, "Segoe UI", system-ui, sans-serif';
+    // Como Windy: texto blanco con un contorno oscuro fino y nítido (sin difuminar) y alineado al píxel
+    // de la pantalla; un halo difuso o una posición con decimales es lo que hacía que se vieran borrosos
+    const snap = (v) => Math.round(v * dpr) / dpr;
     const soft = (txt, x, y) => {
+      x = snap(x);
+      y = snap(y);
       ctx.lineJoin = 'round';
-      ctx.lineWidth = 2.6;
-      ctx.strokeStyle = 'rgba(0,0,0,0.78)';
-      ctx.shadowColor = 'rgba(0,0,0,0.55)';
-      ctx.shadowBlur = shadow;
+      ctx.miterLimit = 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.62)';
       ctx.strokeText(txt, x, y);
-      ctx.shadowBlur = 0;
       ctx.fillText(txt, x, y);
     };
     const draw = (name, lat, lon, mine) => {
@@ -555,12 +556,12 @@ export class FieldLayer {
       // Zona del rótulo respecto a su punto, para poder tocarlo
       this.hits.push({ name, lat, lon, mine, dx: -w / 2, dy: y - y0 - 12, w, h });
       ctx.font = FONT_NAME(mine);
-      ctx.fillStyle = mine ? '#ffd56b' : 'rgba(255,255,255,0.95)';
+      ctx.fillStyle = mine ? '#ffd56b' : '#ffffff';
       soft(name, x, y);
       if (val) {
         ctx.font = FONT_VAL;
         ctx.fillStyle = '#ffffff';
-        soft(val, x, y + 14);
+        soft(val, x, y + 14.5);
       }
       return true;
     };
@@ -694,17 +695,23 @@ export class FieldLayer {
     }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.85)';
-    ctx.shadowBlur = 4 * (this.isoCanvas.dpr || 1);
-    for (const [x, y, k, v] of found.slice(0, 16)) {
+    // Contorno nítido en vez de halo difuso (como los nombres)
+    const d = this.isoCanvas.dpr || 1, snap = (v) => Math.round(v * d) / d;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,0.62)';
+    for (const [x0, y0, k, v] of found.slice(0, 16)) {
+      const x = snap(x0), y = snap(y0);
       ctx.font = '800 22px Roboto, "Segoe UI", system-ui, sans-serif';
       ctx.fillStyle = k === 'A' ? '#ff6b6b' : '#5bb8ff';
+      ctx.lineWidth = 3.5;
+      ctx.strokeText(k, x, y);
       ctx.fillText(k, x, y);
-      ctx.font = '600 11px Roboto, "Segoe UI", system-ui, sans-serif';
+      ctx.font = '700 11.5px Roboto, "Segoe UI", system-ui, sans-serif';
       ctx.fillStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.strokeText(iso.fmt(v), x, y + 17);
       ctx.fillText(iso.fmt(v), x, y + 17);
     }
-    ctx.shadowBlur = 0;
   }
 
   _values(ctx, val) {
@@ -714,8 +721,9 @@ export class FieldLayer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 3 * (this.isoCanvas.dpr || 1);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.62)';
     // Rejilla anclada a la pantalla para que los números no bailen al soltar el mapa
     const x0 = (geo.ox % step) + step / 2, y0 = (geo.oy % step) + step / 2;
     for (let y = y0; y < geo.h - 10; y += step) {
@@ -725,10 +733,10 @@ export class FieldLayer {
         if (this.style.mask && this.landAlpha?.[((y | 0) * geo.w + (x | 0)) * 4 + 3]) continue;
         const txt = val.fmt(v);
         if (!txt) continue;
+        ctx.strokeText(txt, x, y);
         ctx.fillText(txt, x, y);
       }
     }
-    ctx.shadowBlur = 0;
   }
 
   // ---------- Partículas ----------

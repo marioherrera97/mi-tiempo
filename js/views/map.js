@@ -1411,7 +1411,7 @@ export default {
       const relief = map.createPane('reliefPane');
       // Las teselas de Esri son casi blancas: brillo + contraste acentúan las sombras sin oscurecer lo llano.
       // Son filtros CSS (los acelera la GPU); el filtro SVG de antes se recalculaba en cada fotograma del zoom.
-      Object.assign(relief.style, { zIndex: 356, pointerEvents: 'none', mixBlendMode: 'multiply', opacity: 0.7, filter: 'brightness(0.68) contrast(2.8)' });
+      Object.assign(relief.style, { zIndex: 356, pointerEvents: 'none', mixBlendMode: 'multiply', opacity: 0.55, filter: 'brightness(0.8) contrast(1.9)' });
       S.reliefLayer = L.tileLayer(ESRI + 'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { pane: 'reliefPane', maxZoom: 18, maxNativeZoom: 13, attribution: 'Relieve: Esri' });
       if (S.relief) S.reliefLayer.addTo(map);
       // La atribución va justo encima del panel inferior, que cambia de altura

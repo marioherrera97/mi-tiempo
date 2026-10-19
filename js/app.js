@@ -4,6 +4,7 @@ import * as api from './api.js';
 import { refresh } from './data.js';
 import { $, $$, openSheet, closeSheet, initSheets, toast, debounce } from './ui.js';
 import { flag, esc } from './format.js';
+import { initSelects } from './select.js';
 import home from './views/home.js';
 import hourly from './views/hourly.js';
 import map from './views/map.js';
@@ -13,13 +14,14 @@ import compare from './views/compare.js';
 import marine from './views/marine.js';
 import air from './views/air.js';
 import history from './views/history.js';
+import reservoirs from './views/reservoirs.js';
 import settingsView from './views/settings.js';
 
 const VIEWS = {
   inicio: home, horas: hourly, mapa: map, tendencia: trend, mas: more,
-  modelos: compare, mar: marine, aire: air, historico: history, ajustes: settingsView,
+  modelos: compare, mar: marine, aire: air, historico: history, embalses: reservoirs, ajustes: settingsView,
 };
-const PARENT_TAB = { modelos: 'mas', mar: 'mas', aire: 'mas', historico: 'mas', ajustes: 'mas' };
+const PARENT_TAB = { modelos: 'mas', mar: 'mas', aire: 'mas', historico: 'mas', embalses: 'mas', ajustes: 'mas' };
 
 let current = null;
 const dirty = new Set(Object.keys(VIEWS));
@@ -131,6 +133,7 @@ export function locate() {
 
 // ---------- Inicio ----------
 function init() {
+  initSelects();
   initSheets();
   initPlaceSheet();
   updateHeader();
@@ -147,6 +150,7 @@ function init() {
   };
 
   on('place', () => { updateHeader(); invalidateAll(); });
+  on('placeinfo', updateHeader);
   on('favorites', updateHeader);
   on('settings', invalidateAll);
   on('refresh', invalidateAll);

@@ -27,7 +27,31 @@ async function storePut(url, data, t) {
   } catch { /* sin Cache API (navegación privada) */ }
 }
 
-export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
+// Peticiones en curso: si dos vistas piden lo mismo a la vez, se descarga una sola vez
+const inflight = new Map();
+export function getJSON(url, opts) {
+  if (!inflight.has(url)) inflight.set(url, fetchJSON(url, opts).finally(() => inflight.delete(url)));
+  return inflight.get(url);
+}
+// Open-Meteo a veces tarda varios segundos en contestar una petición que suele tardar 0,1 s:
+// si no ha respondido en `ms`, se lanza otra igual y se usa la que llegue antes
+function hedgedFetch(url, signal, ms) {
+  const ctls = [];
+  const go = () => {
+    const c = new AbortController();
+    signal.addEventListener('abort', () => c.abort(), { once: true });
+    ctls.push(c);
+    return fetch(url, { signal: c.signal }).then((res) => { ctls.forEach((o) => o !== c && o.abort()); return res; });
+  };
+  return new Promise((resolve, reject) => {
+    let pending = 1;
+    const fail = (e) => { if (--pending === 0) reject(e); };
+    const timer = setTimeout(() => { pending++; go().then(resolve, fail); }, ms);
+    go().then(resolve, fail).finally(() => clearTimeout(timer));
+  });
+}
+
+async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0 } = {}) {
   const now = Date.now();
   let hit = mem.get(url);
   if (hit && now - hit.t < ttl && hit.t >= freshAfter) return hit.d;
@@ -44,7 +68,7 @@ export async function getJSON(url, { ttl = 10 * 60e3, persist = false } = {}) {
       // Si la red se queda colgada (cobertura móvil mala), se corta y se reintenta
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 25000);
-      const res = await fetch(url, { signal: ctl.signal }).finally(() => clearTimeout(timer));
+      const res = await (hedge ? hedgedFetch(url, ctl.signal, hedge) : fetch(url, { signal: ctl.signal })).finally(() => clearTimeout(timer));
       let data = null;
       try { data = await res.json(); } catch { /* respuesta no JSON */ }
       if (res.status === 429) {
@@ -147,7 +171,7 @@ export async function forecast(p, model = 'best_match') {
     past_minutely_15: model === 'best_match' ? 1 : undefined,
     models: model === 'best_match' ? undefined : model,
   });
-  const d = await getJSON(url, { ttl: 45 * 60e3 });
+  const d = await getJSON(url, { ttl: 45 * 60e3, hedge: 1500 });
   return trimNulls(d);
 }
 
@@ -213,6 +237,14 @@ export async function airQuality(p) {
     ...coord(p), timezone: 'auto', forecast_days: 5, current: vars, hourly: [...vars, ...pollen],
   });
   return getJSON(url, { ttl: 60 * 60e3 });
+}
+
+// ---------- Lluvia de los últimos 3 meses, hora a hora (para la vista de embalses y lluvia) ----------
+export async function rainPast(p) {
+  const url = build('https://api.open-meteo.com/v1/forecast', {
+    ...coord(p), timezone: 'auto', past_days: 92, forecast_days: 1, hourly: 'precipitation', current: 'precipitation',
+  });
+  return getJSON(url, { ttl: 30 * 60e3 });
 }
 
 // ---------- Histórico (ERA5 desde 1940) ----------

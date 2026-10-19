@@ -44,12 +44,24 @@ export function saveSettings() {
 
 const samePlace = (a, b) => Math.abs(a.lat - b.lat) < 0.01 && Math.abs(a.lon - b.lon) < 0.01;
 
-export function setPlace(p) {
+export function setPlace(p, { recent = true } = {}) {
   state.place = p;
   save('place', p);
-  state.recents = [p, ...state.recents.filter((r) => !samePlace(r, p))].slice(0, 8);
-  save('recents', state.recents);
+  if (recent) {
+    state.recents = [p, ...state.recents.filter((r) => !samePlace(r, p))].slice(0, 8);
+    save('recents', state.recents);
+  }
   emit('place', p);
+}
+
+// Completa datos del lugar (provincia, país) sin volver a cargar las vistas
+export function updatePlaceInfo(p, info) {
+  const same = (r) => samePlace(r, p);
+  for (const r of [state.place, ...state.recents].filter(same)) Object.assign(r, info);
+  if (!same(state.place)) return;
+  save('place', state.place);
+  save('recents', state.recents);
+  emit('placeinfo', state.place);
 }
 
 export function isFavorite(p = state.place) {

@@ -1,0 +1,59 @@
+# Actualiza vendor/embalses.json con la reserva de agua de los embalses (Boletín Hidrológico del MITECO).
+# El Ministerio publica los datos los martes; se comprueba el miércoles y el jueves por si se retrasan.
+name: Actualizar embalses
+
+on:
+  schedule:
+    - cron: '30 9 * * 3,4'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  embalses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Lector de bases de datos Access
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mdbtools
+
+      - name: Descargar BD-Embalses del MITECO
+        run: |
+          curl -sSfL --retry 4 --retry-delay 30 -A 'Mozilla/5.0 (MiTiempo; +https://github.com/marioherrera97/mi-tiempo)' \
+            -o bd.zip https://www.miteco.gob.es/content/dam/miteco/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico/Historico-de-embalses/BD-Embalses.zip
+          unzip -o -q bd.zip -d bd
+          ls -la bd
+
+      # Coordenadas de embalses y presas para cruzar por nombre (si Wikidata falla, se usan las ya guardadas)
+      - name: Embalses y presas de Wikidata
+        continue-on-error: true
+        run: |
+          Q='SELECT ?item ?label ?coord WHERE { VALUES ?cls { wd:Q131681 wd:Q12323 wd:Q1244922 wd:Q3497167 wd:Q1068800 wd:Q2140665 wd:Q15911738 } ?item wdt:P31 ?cls; wdt:P17 wd:Q29; wdt:P625 ?coord. { ?item rdfs:label ?label FILTER(lang(?label) IN ("es","ca","gl","eu")) } UNION { ?item skos:altLabel ?label FILTER(lang(?label)="es") } }'
+          curl -sSf --max-time 170 -G -A 'MiTiempo/1.0 (https://github.com/marioherrera97/mi-tiempo)' \
+            -H 'Accept: application/sparql-results+json' --data-urlencode "query=$Q" https://query.wikidata.org/sparql -o wd.json
+          python -c "import json; assert len(json.load(open('wd.json'))['results']['bindings']) > 300"
+
+      - name: Generar datos
+        run: |
+          mdb=$(ls bd/*.mdb | head -1)
+          if [ -s wd.json ]; then python pipeline/embalses.py "$mdb" vendor wd.json; else python pipeline/embalses.py "$mdb" vendor; fi
+
+      - name: Guardar en el repositorio y publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add vendor/embalses.json pipeline/embalses_coords.json
+          if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "Embalses: datos de la semana del $(python -c "import json; print(json.load(open('vendor/embalses.json'))['updated'])")"
+          git push
+          # Los push hechos con el token de Actions no lanzan otros flujos: se publica a mano
+          gh workflow run pages.yml --ref "${GITHUB_REF_NAME}"

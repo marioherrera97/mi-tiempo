@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v34';
+const VERSION = 'v42';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -10,10 +10,10 @@ const SHELL_FILES = [
   'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/chart.js', 'vendor/land.json', 'vendor/borders.json', 'vendor/regions.json', 'vendor/lakes.json', 'vendor/cities.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/state.js', 'js/api.js', 'js/data.js', 'js/format.js', 'js/icons.js', 'js/colors.js',
-  'js/charts.js', 'js/ui.js', 'js/windlayer.js', 'js/owndata.js', 'js/metno.js', 'js/thumbs.js',
+  'js/charts.js', 'js/ui.js', 'js/select.js', 'js/windlayer.js', 'js/owndata.js', 'js/metno.js', 'js/thumbs.js',
   'js/views/home.js', 'js/views/hourly.js', 'js/views/map.js', 'js/views/trend.js',
   'js/views/more.js', 'js/views/compare.js', 'js/views/marine.js', 'js/views/air.js',
-  'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js',
+  'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js', 'js/views/reservoirs.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -71,6 +71,15 @@ self.addEventListener('fetch', (e) => {
         return res;
       })));
     }
+    return;
+  }
+
+  // Embalses: cambian cada semana; primero red y, sin conexión, la última copia
+  if (url.origin === self.location.origin && url.pathname.endsWith('/vendor/embalses.json')) {
+    e.respondWith(fetch(req).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(DATA).then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(() => caches.match(req).then((r) => r || Response.error())));
     return;
   }
 

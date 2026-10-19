@@ -1,7 +1,7 @@
 // Vista "Mapa" (pantalla principal, al estilo Windy): capas de modelo con partículas animadas,
 // altitudes, isobaras, valores sobre el mapa, radar, satélite y pronóstico del punto seleccionado.
 /* global L */
-import { state, settings, saveSettings, setPlace, load, save, on, isFavorite, toggleFavorite } from '../state.js';
+import { state, settings, saveSettings, setPlace, updatePlaceInfo, load, save, on, isFavorite, toggleFavorite } from '../state.js';
 import * as api from '../api.js';
 import * as f from '../format.js';
 import { gradientCSS, colorAt } from '../colors.js';
@@ -192,7 +192,8 @@ async function loadOwn({ meta, imgs, region }) {
     S.tf = 0;
     S.ownGen = null;
   }
-  if (S.ownGen === gen) { if (S.layer === 'rainacc') own.updateAccum(S.grid, S.t0); prepareLayer(); return; }
+  // Mismos datos: no hace falta repintar (salvo la lluvia acumulada, que se recalcula desde la hora actual)
+  if (S.ownGen === gen) { if (S.layer === 'rainacc') { own.updateAccum(S.grid, S.t0); prepareLayer(); } return; }
   S.ownGen = gen;
   const grid = S.grid;
   S.loading++;
@@ -265,7 +266,7 @@ async function loadData(force = false) {
   }
   const spec = S.spec;
   const missing = neededGroups().filter((g) => !S.grid?.groups.has(g));
-  if (!missing.length) { prepareLayer(); return; }
+  if (!missing.length) return; // ya está todo pintado (quien cambia la capa llama a prepareLayer)
   // El grupo de superficie define los tiempos: siempre va primero
   if (!S.grid && !missing.includes('surface')) missing.unshift('surface');
   S.loading++;
@@ -637,6 +638,7 @@ const hhmmLocal = (ms) => { const d = new Date(ms); return `${String(d.getHours(
 // ---------- Iconos y miniaturas de capas (menú estilo Windy) ----------
 const SVG = (p, cls = '') => `<svg viewBox="0 0 24 24"${cls ? ` class="${cls}"` : ''}>${p}</svg>`;
 const IC = {
+  reservoir: '<path d="M12 2.5S5 10.2 5 14.5a7 7 0 0 0 14 0C19 10.2 12 2.5 12 2.5zm0 17a5 5 0 0 1-5-5h2a3 3 0 0 0 3 3z"/><path d="M2 21h20v1.5H2z"/>',
   wind: '<path d="M3 8h10.5A2.5 2.5 0 1 0 11 5.5h-2A4.5 4.5 0 1 1 13.5 10H3zm0 4h15.5a3.5 3.5 0 1 1-3.5 3.5h2a1.5 1.5 0 1 0 1.5-1.5H3zm0-8h4v2H3z"/>',
   drop: '<path d="M12 2.5C8.5 7 6 10.3 6 13.5a6 6 0 0 0 12 0c0-3.2-2.5-6.5-6-11z"/>',
   snow: '<path d="M11 2h2v4.6l3.2-1.9 1 1.7L14 8.3V11h2.7l1.9-3.2 1.7 1-1.9 3.2H22v2h-4.6l1.9 3.2-1.7 1-1.9-3.2H13v2.7l3.2 1.9-1 1.7L13 17.4V22h-2v-4.6l-3.2 1.9-1-1.7 3.2-1.9V13H7.3l-1.9 3.2-1.7-1 1.9-3.2H2v-2h4.6L4.7 7.8l1.7-1L8.3 11H11V8.3L7.8 6.4l1-1.7L11 6.6z"/>',
@@ -1022,28 +1024,72 @@ function updatePicker() {
   }
 }
 
-function pickAt(latlng) {
+// ---------- Punto de mira (móvil, como Windy) ----------
+// En el móvil el punto tocado se lleva con suavidad bajo un punto de mira fijo; al arrastrar el mapa
+// el valor de arriba va cambiando con el lugar que queda debajo. En el ordenador se usa el pin arrastrable.
+const crossMode = () => !matchMedia('(min-width: 900px)').matches;
+function crossPoint() {
+  const size = S.map.getSize();
+  const mapTop = S.map.getContainer().getBoundingClientRect().top;
+  const top = Math.max(0, el('wPicker').getBoundingClientRect().bottom - mapTop);
+  const bottom = size.y - 150;
+  return L.point(Math.round(size.x / 2), Math.round(top + Math.max(80, bottom - top) * 0.3));
+}
+function placeCross() {
+  const cp = crossPoint();
+  S.cross.style.transform = `translate(${cp.x}px, ${cp.y}px)`;
+  return cp;
+}
+// Durante el arrastre: valor del lugar bajo el punto de mira (muestrear la rejilla es instantáneo)
+function followCross() {
+  if (!S.crossOn || S.crossPan) return;
+  S.pick = S.map.containerPointToLatLng(crossPoint());
+  updatePicker();
+}
+// Cuando el mapa se queda quieto, ese lugar pasa a ser el elegido (sin llenar la lista de recientes)
+const commitCross = debounce(() => { if (S.crossOn && S.pick) commitPick(S.pick, false); }, 600);
+
+// El pin y su valor salen al instante; el cambio de lugar (nombre, pronóstico) va aparte
+function showPick(latlng) {
   S.pick = latlng;
   el('wSearch').classList.add('hidden');
   el('wNow').classList.add('hidden');
   el('wPicker').classList.remove('hidden');
   updatePicker();
-  S.marker.setLatLng(latlng);
-  // El punto tocado pasa a ser el lugar seleccionado (como en Windy)
+  if (!crossMode()) { S.marker.setLatLng(latlng); return; }
+  S.crossOn = true;
+  el('view-map').classList.add('crosshair');
+  const cp = placeCross();
+  // Se desliza el mapa para dejar el punto bajo la mira; mientras tanto el valor es el del punto tocado
+  S.crossPan = true;
+  S.map.panBy(S.map.latLngToContainerPoint(latlng).subtract(cp), { animate: true, duration: 0.35, easeLinearity: 0.4 });
+}
+function pickAt(latlng) {
+  showPick(latlng);
+  commitPick(latlng);
+}
+function commitPick(latlng, recent = true) {
+  // El punto tocado pasa a ser el lugar seleccionado (como en Windy); su pronóstico se pide ya, a la vez que el nombre
+  prefetchPlace({ lat: latlng.lat, lon: latlng.lng });
   api.reverseGeocode(latlng.lat, latlng.lng).then((p) => {
     p.lat = latlng.lat; p.lon = latlng.lng;
     S.keepView = true;
-    setPlace(p);
+    setPlace(p, { recent });
   });
 }
 function openPlace(hit) {
   // El lugar ya elegido: solo se abre su pronóstico
   if (Math.abs(hit.lat - state.place.lat) < 1e-4 && Math.abs(hit.lon - state.place.lon) < 1e-4) { closePicker(); openDetail(el('view-map')); return; }
-  const go = (extra) => setPlace({ ...extra, name: hit.name, lat: hit.lat, lon: hit.lon });
-  api.reverseGeocode(hit.lat, hit.lon).then(go).catch(() => go({}));
+  // Se abre ya con el nombre del mapa; la provincia y el país llegan después sin volver a cargar
+  setPlace({ name: hit.name, lat: hit.lat, lon: hit.lon });
+  api.reverseGeocode(hit.lat, hit.lon).then(({ admin, country, cc }) => updatePlaceInfo(hit, { admin, country, cc })).catch(() => {});
 }
+// Al tocar un nombre se empieza a descargar su pronóstico sin esperar a descartar el doble toque
+const prefetchPlace = (hit) => api.forecast(hit, settings.model).catch(() => {});
 function closePicker() {
   S.pick = null;
+  S.crossOn = false;
+  el('view-map').classList.remove('crosshair');
   S.marker.getElement()?.querySelector('.pin-val')?.classList.add('hidden');
   el('wPicker').classList.add('hidden');
   el('wSearch').classList.remove('hidden');
@@ -1087,6 +1133,7 @@ function buildMenu() {
       <a href="#/inicio">${SVG(IC.cloud)}<span>Pronóstico</span></a>
       <a href="#/horas">${SVG(IC.clock)}<span>Por horas</span></a>
       <a href="#/tendencia">${SVG(IC.trend)}<span>Largo plazo</span></a>
+      <a href="#/embalses">${SVG(IC.reservoir)}<span>Embalses y lluvia</span></a>
       <button data-favs>${SVG(IC.heart)}<span>Mis favoritos</span></button>
       <a href="#/mas">${SVG(IC.grid)}<span>Más</span></a>
       <a href="#/ajustes">${SVG(IC.gear)}<span>Configuración</span></a>
@@ -1240,7 +1287,19 @@ function buildUI(root) {
   el('wGps').onclick = () => el('gpsBtn').click();
   el('wFav').onclick = () => { toggleFavorite(); toast(isFavorite() ? 'Guardado en favoritos' : 'Quitado de favoritos'); };
   el('wpFav').onclick = () => { if (!isFavorite()) toggleFavorite(); toast('Guardado en favoritos'); };
-  el('wpDetail').onclick = () => { closePicker(); openDetail(el('view-map')); };
+  el('wpDetail').onclick = () => {
+    // Si el mapa se acaba de mover, el lugar bajo la mira aún no se ha fijado: se fija ya (el nombre llega después)
+    const ll = S.pick;
+    const pending = S.crossOn && ll && (Math.abs(ll.lat - state.place.lat) > 1e-4 || Math.abs(ll.lng - state.place.lon) > 1e-4);
+    closePicker();
+    if (pending) {
+      const at = { lat: ll.lat, lon: ll.lng };
+      S.keepView = true;
+      setPlace({ name: `${ll.lat.toFixed(2)}, ${ll.lng.toFixed(2)}`, ...at }, { recent: false });
+      api.reverseGeocode(at.lat, at.lon).then(({ name, admin, country, cc }) => updatePlaceInfo(at, { name, admin, country, cc })).catch(() => {});
+    }
+    openDetail(el('view-map'));
+  };
   el('wpClose').onclick = closePicker;
   el('wNow').onclick = () => openDetail(el('view-map'));
   el('wMenuBtn').onclick = openMenu;
@@ -1339,13 +1398,24 @@ export default {
         clearTimeout(clickTimer);
         // Tocar el nombre de una localidad abre su pronóstico
         const hit = S.cities ? S.field.labelAt(e.containerPoint) : null;
-        clickTimer = setTimeout(() => (hit ? openPlace(hit) : pickAt(e.latlng)), 280);
+        if (hit) { prefetchPlace(hit); clickTimer = setTimeout(() => openPlace(hit), 280); return; }
+        showPick(e.latlng);
+        clickTimer = setTimeout(() => commitPick(e.latlng), 280);
       });
       // Manita sobre los nombres, para que se vea que se pueden tocar
       map.on('mousemove', (e) => {
         map.getContainer().style.cursor = S.cities && S.field.labelAt(e.containerPoint) ? 'pointer' : '';
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
+      // Punto de mira del móvil
+      S.cross = L.DomUtil.create('div', 'w-cross', map.getContainer());
+      S.cross.innerHTML = '<svg viewBox="0 0 48 48"><path d="M24 3v10M24 35v10M3 24h10M35 24h10"/><circle cx="24" cy="24" r="2.6"/></svg>';
+      map.on('move', followCross);
+      map.on('moveend', () => {
+        if (S.crossPan) { S.crossPan = false; return; }
+        if (S.crossOn) commitCross();
+      });
+      map.on('resize', () => { if (S.crossOn) { placeCross(); followCross(); } });
       map.whenReady(() => { S.field.redraw(); loadData(true); });
       loadRadar();
       applyLayer();
@@ -1373,7 +1443,10 @@ export default {
     const fromSearch = placeChanged && !S.keepView;
     S.keepView = false;
     if (fromSearch) { closePicker(); S.map.setView(ll, Math.max(S.map.getZoom(), 7)); }
-    buildMenu();
+    // El menú de capas no depende del lugar: solo se rehace si cambian los ajustes
+    const settingsKey = JSON.stringify(settings);
+    if (settingsKey !== S.settingsKey) buildMenu();
+    S.settingsKey = settingsKey;
     updateTopBar();
     if (detailOpen() || fromSearch) openDetail(root);
     updatePlaces();

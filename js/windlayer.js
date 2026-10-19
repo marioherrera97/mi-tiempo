@@ -51,14 +51,15 @@ export class FieldLayer {
     const hideText = (on) => { this.isoCanvas.style.visibility = on ? 'hidden' : ''; };
     this._h = {
       movestart: () => { clearTimeout(this._settle); this.clearParticles(); },
-      // Se redibuja cuando el mapa se queda quieto: durante un zoom continuo (rueda, pellizco)
-      // solo se escalan los lienzos y así no da tirones
+      // Al soltar un arrastre se redibuja en el siguiente fotograma. Tras un zoom se espera a que el mapa
+      // se quede quieto: durante un zoom continuo (rueda, pellizco) solo se escalan los lienzos y así no da tirones
       moveend: () => {
         clearTimeout(this._settle);
-        this._settle = setTimeout(() => { this.redraw(); hideText(false); }, 160);
+        if (!this._zooming) { this.redraw(); return; }
+        this._settle = setTimeout(() => { this._zooming = false; this.redraw(); hideText(false); }, 160);
       },
       resize: () => this.redraw(),
-      zoomstart: () => { clearTimeout(this._settle); this.clearParticles(); hideText(true); },
+      zoomstart: () => { clearTimeout(this._settle); this._zooming = true; this.clearParticles(); hideText(true); },
       zoomanim: (e) => this._animateZoom(e),
       zoom: () => this._scaleToView(),
       // (se vuelven a mostrar en moveend, que Leaflet lanza siempre tras el zoom y ya con el redibujado hecho)
@@ -67,6 +68,22 @@ export class FieldLayer {
   }
 
   setGrid(grid) { this.grid = grid; this.redraw(); }
+
+  // Varios cambios seguidos (capa, lugares, ciudades…) se pintan juntos en un solo fotograma
+  _queue(parts) {
+    this._dirty ||= {};
+    for (const k in parts) if (parts[k]) this._dirty[k] = true;
+    if (this._rq) return;
+    this._rq = requestAnimationFrame(() => {
+      this._rq = null;
+      const d = this._dirty;
+      this._dirty = null;
+      if (d.prepare) { if (!this.map._loaded) return; this._prepare(); }
+      if (d.field || d.prepare) this.drawField();
+      if (d.iso || d.prepare) this.drawIso();
+      if (d.particles || d.prepare) this.startParticles();
+    });
+  }
 
   setTime(t, tf = 0) {
     this.t = t;
@@ -82,9 +99,7 @@ export class FieldLayer {
     this.style = style;
     if (maskChanged) this._buildMask();
     this.lutData = style.var ? lut(style.scale, style.min, style.max) : null;
-    this.drawField();
-    this.drawIso();
-    if (flowChanged) this.startParticles();
+    this._queue({ field: true, iso: true, particles: flowChanged });
   }
 
   // ---------- Muestreo ----------
@@ -222,13 +237,7 @@ export class FieldLayer {
   // Durante el pellizco (zoom táctil)
   _scaleToView() { this._transformTo(this.map.getCenter(), this.map.getZoom()); }
 
-  redraw() {
-    if (!this.map._loaded) return;
-    this._prepare();
-    this.drawField();
-    this.drawIso();
-    this.startParticles();
-  }
+  redraw() { this._queue({ prepare: true }); }
 
   // ---------- Máscara de tierra para capas marinas ----------
   setLand(rings) {
@@ -242,7 +251,7 @@ export class FieldLayer {
     });
     this._buildMask();
     this._buildShade();
-    this.drawField();
+    this._queue({ field: true });
   }
 
   _buildMask() {
@@ -330,8 +339,8 @@ export class FieldLayer {
 
   // ---------- Ciudades con el valor de la capa (como en Windy) ----------
   // cities: [[nombre, lat, lon, minZoom], ...] ordenadas por importancia; extra: lugares propios (favoritos)
-  setCities(cities) { this.cities = cities; this.drawIso(); }
-  setPlaces(places) { this.places = places || []; this.drawIso(); }
+  setCities(cities) { this.cities = cities; this._queue({ iso: true }); }
+  setPlaces(places) { this.places = places || []; this._queue({ iso: true }); }
 
   _cityLabels(ctx) {
     const geo = this.geo;
@@ -393,16 +402,28 @@ export class FieldLayer {
       }
       return true;
     };
-    // Primero los lugares propios (lugar elegido y favoritos), luego ciudades y pueblos por población
+    // Primero los lugares propios (lugar elegido y favoritos), luego ciudades y pueblos por población.
+    // Los que ya se veían tienen preferencia: así al mover el mapa un pueblo no desaparece porque
+    // otro más grande entre en el margen o salga de debajo de un botón. Al alejar se vuelve a elegir de cero.
     const mine = this.places || [];
     for (const p of mine) draw(p.name, p.lat, p.lon, true);
     const b = this.bounds;
-    let n = 0;
-    for (const c of this.cities) {
-      if (c[3] > z + 1 || !b.contains([c[1], c[2]])) continue;
-      if (mine.some((p) => Math.abs(p.lat - c[1]) < 0.02 && Math.abs(p.lon - c[2]) < 0.03)) continue; // ya rotulado
-      if (draw(c[0], c[1], c[2], false) && ++n >= 150) break;
-    }
+    const prev = this._shownZoom !== undefined && z >= this._shownZoom ? this._shown : null;
+    const shown = new Set();
+    const key = (c) => c[0] + c[1];
+    const pass = (sticky) => {
+      for (const c of this.cities) {
+        if (shown.size >= 150) return;
+        if (!!prev?.has(key(c)) !== sticky) continue;
+        if (c[3] > z + 1 || !b.contains([c[1], c[2]])) continue;
+        if (mine.some((p) => Math.abs(p.lat - c[1]) < 0.02 && Math.abs(p.lon - c[2]) < 0.03)) continue; // ya rotulado
+        if (draw(c[0], c[1], c[2], false)) shown.add(key(c));
+      }
+    };
+    if (prev) pass(true);
+    pass(false);
+    this._shown = shown;
+    this._shownZoom = z;
   }
 
   _isolines(ctx, iso) {

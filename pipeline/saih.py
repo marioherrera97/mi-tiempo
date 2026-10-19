@@ -294,7 +294,8 @@ EBRO = 'https://www.saihebro.com/api/'
 
 def fetch_ebro(state, coords):
     hourly = Hourly(state, 'ebro')
-    plu = json.loads(retry(lambda: http(EBRO + 'pluviometrias/getTablaPluviometrias', timeout=150)))
+    # Desde GitHub no conecta (la app lo pide entonces directamente): un solo intento corto para no alargar la ejecución
+    plu = json.loads(http(EBRO + 'pluviometrias/getTablaPluviometrias', timeout=25))
     new = 0
     gauges = []
     for r in plu:
@@ -315,7 +316,7 @@ def fetch_ebro(state, coords):
         hourly.add(code, HOUR, r.get('col1'))
         p = hourly.sums(code, HOUR, [r.get('col1'), None, None, r.get('col3')])
         gauges.append(gauge(f'E-{code}', r['nombre'], ll[0], ll[1], p, iso(NOW.replace(minute=0)), 'SAIH Ebro'))
-    vols = json.loads(retry(lambda: http(EBRO + 'principal/getVolumenesEmbalsados', timeout=150)))['volumenes']
+    vols = json.loads(http(EBRO + 'principal/getVolumenesEmbalsados', timeout=25))['volumenes']
     reservoirs = []
     for k, v in vols.items():
         if k == 'cuenca' or not v.get('data') or len(v['data']) < 2:

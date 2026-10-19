@@ -717,6 +717,9 @@ def main(state_path, out_path, *only):
         # [id, nombre, lat, lon, altitud, lluvia 1 h, 6 h, 12 h, 24 h (mm), hora del dato (UTC), fuente]
         'gauges': [[g['id'], g['name'], round(g['lat'], 4), round(g['lon'], 4), g['alt'], *g['p'], g['t'], g['src']] for g in gauges],
         'reservoirs': reservoirs,
+        # El SAIH Ebro no responde desde GitHub (bloquea sus servidores) pero sí desde un móvil en España y
+        # permite CORS: la app lo pide directamente y necesita las coordenadas de sus pluviómetros
+        'coords': {'ebro': {k.split(':', 1)[1]: v for k, v in coords.items() if k.startswith('ebro:') and v}},
     }, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     print(f'Total: {len(reservoirs)} embalses y {len(gauges)} pluviómetros')
 

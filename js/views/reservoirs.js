@@ -34,10 +34,38 @@ export const getSaih = () => {
     saih = fetch('data/saih.json').then((r) => {
       if (!r.ok) throw new Error('Sin datos del SAIH');
       return r.json();
+    }).then(async (d) => {
+      // El SAIH Ebro bloquea a GitHub, pero permite que la app lo pida directamente: si no vino, se pide aquí
+      if (!d.gauges.some((g) => g[10] === 'SAIH Ebro')) await ebroDirect(d).catch(() => {});
+      return d;
     }).catch((e) => { saih = null; throw e; });
   }
   return saih;
 };
+
+// Tabla de pluviometría (última hora y 24 h) y volúmenes del día del SAIH Ebro, pedidos desde el móvil
+async function ebroDirect(d) {
+  const api = 'https://www.saihebro.com/api/';
+  const get = (u) => {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 15000);
+    return fetch(api + u, { signal: ctl.signal }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status))));
+  };
+  const [plu, vol] = await Promise.all([get('pluviometrias/getTablaPluviometrias'), get('principal/getVolumenesEmbalsados')]);
+  const cc = d.coords?.ebro || {};
+  const t = new Date().toISOString().slice(0, 13) + ':00Z';
+  const n = (v) => (f.isNum(v) && v >= 0 ? Math.round(v * 10) / 10 : null);
+  for (const r of plu || []) {
+    const ll = cc[r.codigo];
+    if (ll) d.gauges.push([`E-${r.codigo}`, r.nombre, ll[0], ll[1], null, n(r.col1), null, null, n(r.col3), t, 'SAIH Ebro']);
+  }
+  for (const [k, v] of Object.entries(vol?.volumenes || {})) {
+    const c = v.data?.[1];
+    const vv = parseFloat(c?.volumen);
+    if (k === 'cuenca' || !(vv > 0.5) || !f.isNum(c.y)) continue;
+    d.reservoirs.push({ name: v.zona, basin: 'Ebro', lat: null, lon: null, vol: vv, pct: c.y, d24: null, t: `${v.fechaAnsi}T07:00Z`, src: 'SAIH Ebro' });
+  }
+}
 // Pluviómetros de AEMET y del SAIH juntos, en el formato de AEMET más la fuente al final
 export const getAllGauges = async () => {
   const [a, sh] = await Promise.all([getGauges().catch(() => null), getSaih().catch(() => null)]);
@@ -63,10 +91,16 @@ export function liveFor(d, sh) {
     d.res.forEach((r, i) => {
       const rn = plain(r[0]);
       if (!rn || !(rn === ln || ln.startsWith(rn + ' ') || rn.startsWith(ln + ' '))) return;
-      const km = f.isNum(r[8]) ? distKm(L.lat, L.lon, r[8], r[9]) : 0;
+      // Sin coordenadas propias (Ebro pedido desde la app) vale el mismo nombre en la misma cuenca
+      if (!f.isNum(L.lat) && d.basins[r[1]].name !== L.basin) return;
+      const km = f.isNum(r[8]) && f.isNum(L.lat) ? distKm(L.lat, L.lon, r[8], r[9]) : 0;
       if (km < 25 && km < bd) { best = i; bd = km; }
     });
-    if (best !== null) out.set(best, L);
+    if (best !== null) {
+      out.set(best, L);
+      const r = d.res[best];
+      if (!f.isNum(L.lat) && f.isNum(r[8])) { L.lat = r[8]; L.lon = r[9]; }
+    }
   }
   return out;
 }
@@ -215,7 +249,7 @@ function renderReservoirs(box, d, sh) {
     ${near.length ? `<div class="section-title">Embalses cerca de ${f.esc(here.name)}</div>
       <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)))).join('')}</div>` : ''}
     ${sh?.reservoirs?.length ? `<div class="section-title">En tiempo real cerca de ${f.esc(here.name)}</div>
-      <div class="card rv-list rv-livelist">${sh.reservoirs.map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow">
+      <div class="card rv-list rv-livelist">${sh.reservoirs.filter((L) => f.isNum(L.lat)).map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow">
         <div class="rv-top"><b>${f.esc(stationName(L.name))}</b><span class="rv-n">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(L.basin)}</span><span class="rv-pct" style="color:${fillColor(L.pct)}">${Math.round(L.pct)} %</span></div>
         ${bar(L.pct)}
         <div class="rv-sub"><span>${hm3(L.vol)} · ${f.esc(L.src)}, ${liveTime(L)}</span>${f.isNum(L.d24) ? `<span>24 h ${delta(L.d24)}</span>` : ''}</div></div>`).join('')}</div>

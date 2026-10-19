@@ -16,8 +16,9 @@ Fuentes (todas públicas; datos provisionales sin validar):
 - MeteoGalicia: lluvia horaria de sus estaciones.
 - SAIH Segura: lluvia de 1 a 24 h de sus pluviómetros desde el servicio ArcGIS público de su visor, y volumen
   de los embalses de su iVisor (sus condiciones de uso, aceptadas por el usuario, piden citar a la CHS como fuente).
-Sin fuente usable: SAI Cantábrico (código ofuscado para que no se lea desde fuera), Galicia Costa y País Vasco
-(no publican el volumen en tiempo real). Sus embalses siguen saliendo con el boletín semanal.
+- SAI Cantábrico: embalses y pluviómetros del visor (su aviso legal permite reutilizar citando la fuente).
+Sin fuente: Galicia Costa y cuencas internas del País Vasco no publican el volumen de sus embalses en tiempo real
+(solo boletines periódicos), así que siguen con el boletín semanal del MITECO.
 
 Cuando una fuente solo da la lluvia de la última hora, las de 6, 12 y 24 h se suman con lo guardado en el fichero
 de estado de las ejecuciones anteriores. Las coordenadas que no vienen en los listados se piden una vez a la
@@ -616,6 +617,48 @@ def fetch_segura(state):
     return gauges, reservoirs
 
 
+# ---------- SAI Cantábrico ----------
+# Su aviso legal permite reutilizar la información sin autorización expresa citando la fuente
+CHC = 'https://visor.saichcantabrico.es/wp-admin/admin-ajax.php'
+
+
+def chc_layer(tipo):
+    raw = retry(lambda: http(CHC, {'action': 'peticion_cincominutal', 'tipo': tipo}, timeout=90, form=True))
+    return json.loads(raw[raw.index('{'):])['data']['features']
+
+
+def chc_time(s):
+    return iso(local_to_utc(datetime.strptime(s[:16], '%Y-%m-%d %H:%M'))) if s else iso(NOW)
+
+
+def fetch_cantabrico(state):
+    hourly = Hourly(state, 'cantabrico')
+    gauges = []
+    for f in chc_layer('precipitacion'):
+        p = f['properties']
+        if p.get('fuera_servicio') or p.get('lat') is None:
+            continue
+        t = chc_time(p.get('fecha'))
+        hour = t[:13]
+        code = p.get('codigo') or p['nombre']
+        hourly.add(code, hour, p.get('precipit_1h'))
+        val = lambda k: round(p[k], 1) if isinstance(p.get(k), (int, float)) and p[k] >= 0 else None
+        gauges.append(gauge(f'C-{code}', p['nombre'], p['lat'], p['lon'],
+                            hourly.sums(code, hour, [val('precipit_1h'), None, val('precipit_12h'), val('precipit_24h')]), t, 'SAI Cantábrico'))
+    reservoirs = []
+    for f in chc_layer('embalses'):
+        p = f['properties']
+        vol, pct = p.get('volumen_embalse'), p.get('porcentaje_llenado')
+        if not isinstance(vol, (int, float)) or vol <= 0.05 or not isinstance(pct, (int, float)) or p.get('lat') is None:
+            continue
+        name = re.sub(r'^Embalse\s+(de\s+)?', '', p['nombre'])
+        # Cuenca por posición (al oeste de Cantabria central, Occidental), por si no está en el boletín
+        basin = 'Cantábrico Occidental' if p['lon'] < -3.8 else 'Cantábrico Oriental'
+        reservoirs.append(reservoir(name, basin, vol, pct, chc_time(p.get('fecha')), 'SAI Cantábrico', p['lat'], p['lon'],
+                                    cap=p.get('volumenTotal')))
+    return gauges, reservoirs
+
+
 # ---------- MeteoGalicia ----------
 MG = 'https://servizos.meteogalicia.gal/mgrss/observacion/'
 
@@ -682,6 +725,7 @@ SOURCES = [
     ('ACA', lambda s, c: fetch_aca(s)),
     ('Hidrosur', lambda s, c: fetch_hidrosur(s)),
     ('SAIH Segura', lambda s, c: fetch_segura(s)),
+    ('SAI Cantábrico', lambda s, c: fetch_cantabrico(s)),
     ('MeteoGalicia', lambda s, c: fetch_galicia(s)),
 ]
 

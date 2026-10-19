@@ -6,12 +6,73 @@ import * as api from '../api.js';
 import * as f from '../format.js';
 import { loading, errorBox } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
+import { colorAt } from '../colors.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
   if (!r.ok) throw new Error(`Error HTTP ${r.status}`);
   return r.json();
 }).catch((e) => { data = null; throw e; }));
+
+// ---------- Pluviómetros de AEMET (data/pluviometros.json, se rehace cada hora en GitHub Actions) ----------
+let gauges = null, gaugesAt = 0;
+export const getGauges = () => {
+  if (!gauges || Date.now() - gaugesAt > 20 * 60e3) {
+    gaugesAt = Date.now();
+    gauges = fetch('data/pluviometros.json').then((r) => {
+      if (!r.ok) throw new Error('Todavía no hay datos de pluviómetros');
+      return r.json();
+    }).catch((e) => { gauges = null; throw e; });
+  }
+  return gauges;
+};
+// [indicativo, nombre, lat, lon, altitud, 1 h, 6 h, 12 h, 24 h, horas con dato]
+const GAUGE_COL = { 1: 5, 6: 6, 12: 7, 24: 8 };
+export const gaugeVal = (r, w) => r[GAUGE_COL[w]];
+// 24 h cuando la mayoría de pluviómetros ya las tiene completas (el proceso horario necesita un día para juntarlas)
+export const gaugeWindow = (d) => (d.st.filter((r) => r[8] !== null).length > d.st.length * 0.5 ? 24 : 12);
+// «IBIZA/ES CODOLÁ» -> «Ibiza/Es Codolá»
+export const stationName = (n) => n.toLowerCase().replace(/(^|[\s/(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase())
+  .replace(/ (De|Del|La|Las|Los|El|Y|D'|L')(?= )/g, (m) => m.toLowerCase());
+// Color de la escala de lluvia acumulada del mapa, opaco, y texto legible encima
+export const rainColor = (mm) => {
+  const [r, g, b] = colorAt('rainacc', Math.max(1, mm));
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return [`rgb(${r | 0},${g | 0},${b | 0})`, lum > 0.6 ? '#0d141c' : '#fff'];
+};
+export const gaugeTime = (d) => new Date(d.updated).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+const mm = (v) => (f.isNum(v) ? f.precip(v, false) : '–');
+
+function renderGauges(box, d) {
+  const here = state.place;
+  const w = gaugeWindow(d);
+  const near = d.st.map((r) => [r, distKm(here.lat, here.lon, r[2], r[3])]).sort((a, b) => a[1] - b[1]).slice(0, 4).filter(([, km]) => km < 60);
+  const top = d.st.filter((r) => gaugeVal(r, w) > 0).sort((a, b) => gaugeVal(b, w) - gaugeVal(a, w)).slice(0, 8);
+  const cell = (v) => {
+    if (!f.isNum(v)) return '<td class="muted">–</td>';
+    if (v < 0.1) return '<td class="muted">0</td>';
+    const [bg, fg] = rainColor(v);
+    return `<td><span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)}</span></td>`;
+  };
+  box.innerHTML = `
+    <div class="card">
+      <div class="card-head"><h2>Pluviómetros cerca</h2><span class="tiny">AEMET · hasta las ${gaugeTime(d)}</span></div>
+      ${near.length ? `<div class="pv-table-wrap"><table class="pv-table">
+        <thead><tr><th></th><th>1 h</th><th>6 h</th><th>12 h</th><th>24 h</th></tr></thead>
+        <tbody>${near.map(([r, km]) => `<tr><th><b>${f.esc(stationName(r[1]))}</b><small>${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''}</small></th>
+          ${cell(r[5])}${cell(r[6])}${cell(r[7])}${cell(r[8])}</tr>`).join('')}</tbody></table></div>`
+        : '<p class="note">No hay ningún pluviómetro de AEMET a menos de 60 km de este lugar.</p>'}
+      <p class="note">Lluvia medida en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()} por las estaciones automáticas de AEMET (datos sin validar).
+        ${w === 12 ? 'Las 24 h estarán completas cuando el proceso horario lleve un día funcionando.' : ''}</p>
+    </div>
+    ${top.length ? `<div class="card"><div class="card-head"><h2>Donde más ha llovido</h2><span class="tiny">últimas ${w} h</span></div>
+      <div class="pv-top">${top.map((r, i) => {
+        const v = gaugeVal(r, w);
+        const [bg, fg] = rainColor(v);
+        return `<div class="pv-row"><span class="pv-n">${i + 1}</span><span class="pv-name">${f.esc(stationName(r[1]))}</span>
+          <span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)} ${f.precipUnit()}</span></div>`;
+      }).join('')}</div></div>` : ''}`;
+}
 
 // Colores por porcentaje de llenado, como embalses.net (rojo vacío → azul lleno)
 export const fillColor = (p) => (p < 20 ? '#e5484d' : p < 40 ? '#f08c3c' : p < 60 ? '#e9c13b' : p < 80 ? '#4fa3ff' : '#2f6fe0');
@@ -255,14 +316,18 @@ async function renderRain(box) {
 
 export default {
   async render(el) {
-    el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvRain"></div>
+    el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
-      Ubicación de los embalses: Wikidata y OpenStreetMap. Lluvia: Open-Meteo y ERA5 (Copernicus).</p>`;
+      Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData.
+      Lluvia del año: Open-Meteo y ERA5 (Copernicus).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');
     loading(resBox, 'Cargando embalses…');
     const res = getData().then((d) => renderReservoirs(resBox, d)).catch((e) => errorBox(resBox, e, () => this.render(el)));
     const rain = renderRain(rainBox).catch((e) => errorBox(rainBox, e, () => renderRain(rainBox)));
-    await Promise.all([res, rain]);
+    const gBox = el.querySelector('#rvGauges');
+    // Sin datos de pluviómetros (aún no publicados) la sección simplemente no aparece
+    const gau = getGauges().then((d) => renderGauges(gBox, d)).catch(() => { gBox.innerHTML = ''; });
+    await Promise.all([res, rain, gau]);
   },
 };

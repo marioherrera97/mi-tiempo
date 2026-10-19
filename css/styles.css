@@ -578,3 +578,19 @@ select.xsel-native { display: none !important; }
 .rv-cmp span { color: var(--text-3); }
 .rv-cmp b { font-weight: 550; text-align: right; }
 .rv-rain .stat .v { font-size: 18px; }
+
+/* Pluviómetros */
+.pv-table-wrap { overflow-x: auto; margin: 0 -4px; }
+.pv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pv-table thead th { color: var(--text-3); font-weight: 600; font-size: 11.5px; padding: 0 4px 6px; text-align: center; }
+.pv-table tbody th { text-align: left; font-weight: 400; padding: 7px 4px; max-width: 140px; }
+.pv-table tbody th b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-table tbody th small { color: var(--text-3); font-size: 11.5px; }
+.pv-table td { text-align: center; padding: 7px 3px; border-top: 1px solid var(--line); }
+.pv-table tbody th { border-top: 1px solid var(--line); }
+.pv-chip { display: inline-block; min-width: 30px; padding: 2px 7px; border-radius: 9px; font-weight: 700; font-size: 12.5px; white-space: nowrap; }
+.pv-top { display: flex; flex-direction: column; }
+.pv-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.pv-row:first-child { border-top: 0; }
+.pv-n { width: 18px; color: var(--text-3); font-size: 12px; text-align: right; }
+.pv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }

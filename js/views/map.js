@@ -112,7 +112,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), reservoirs: load('map.reservoirs', false), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), reservoirs: load('map.reservoirs', false), gauges: load('map.gauges', false), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -1098,6 +1098,33 @@ function showReservoirs() {
     }));
   }).catch(() => toast('No se pudieron cargar los embalses'));
 }
+// Pluviómetros de AEMET: etiqueta con los mm de las últimas 24 h (o 12 h mientras no se han juntado 24)
+function showGauges() {
+  clearInterval(S.gaugeTimer);
+  if (!S.gauges) { S.field.setGauges(null); S.map.closePopup(); return; }
+  const draw = () => rv.getGauges().then((d) => {
+    if (!S.gauges) return;
+    const w = rv.gaugeWindow(d);
+    S.field.setGauges(d.st.filter((r) => rv.gaugeVal(r, w) >= 0.1).sort((a, b) => rv.gaugeVal(b, w) - rv.gaugeVal(a, w)).map((r) => {
+      const v = rv.gaugeVal(r, w);
+      const [bg, fg] = rv.rainColor(v);
+      return { r, d, w, lat: r[2], lon: r[3], val: v, text: f.precip(v, false), bg, fg };
+    }));
+  }).catch(() => { S.field.setGauges(null); toast('Todavía no hay datos de pluviómetros'); S.gauges = false; save('map.gauges', false); buildMenu(); });
+  draw();
+  S.gaugeTimer = setInterval(draw, 30 * 60e3); // se rehacen cada hora en el servidor
+}
+function openGauge(g) {
+  const r = g.r;
+  const row = (label, v) => `<span>${label}</span><b>${f.isNum(v) ? f.precip(v, true) : '–'}</b>`;
+  const html = `<div class="rv-pop-in">
+    <div class="rv-top"><b>${f.esc(rv.stationName(r[1]))}</b></div>
+    <div class="pv-pop-grid">${row('Última hora', r[5])}${row('6 horas', r[6])}${row('12 horas', r[7])}${row('24 horas', r[8])}</div>
+    <div class="rv-pop-meta">Pluviómetro de AEMET${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''} · hasta las ${rv.gaugeTime(g.d)}</div></div>`;
+  L.popup({ className: 'rv-pop', maxWidth: 240, minWidth: 190, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+    .setLatLng([r[2], r[3]]).setContent(html).openOn(S.map);
+}
+
 // Ficha de un embalse al tocarlo
 function openReservoir(x) {
   const [, , cap, cur, prev, year] = x.r;
@@ -1176,6 +1203,7 @@ function buildMenu() {
     ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
     ${tog('water', 'Lagos y embalses', S.water)}
     ${tog('reservoirs', 'Embalses: % de llenado', S.reservoirs)}
+    ${tog('gauges', 'Pluviómetros: lluvia medida', S.gauges)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
@@ -1202,6 +1230,7 @@ function buildMenu() {
     if (name === 'borders') { S.borders = checked; save('map.borders', checked); showBorders(); }
     if (name === 'water') { S.water = checked; save('map.water', checked); showWater(); }
     if (name === 'reservoirs') { S.reservoirs = checked; save('map.reservoirs', checked); showReservoirs(); }
+    if (name === 'gauges') { S.gauges = checked; save('map.gauges', checked); showGauges(); }
     if (name === 'cities') {
       S.cities = checked;
       save('map.cities', checked);
@@ -1409,6 +1438,7 @@ export default {
       map.whenReady(() => loadPlaceTiles());
       updatePlaces();
       showReservoirs();
+      showGauges();
       on('favorites', updatePlaces);
       // El punto se puede arrastrar: el valor de la burbuja cambia mientras se mueve
       S.marker = L.marker([state.place.lat, state.place.lon], { draggable: true, autoPan: true, icon: L.divIcon({ className: '', html: '<div class="pin"></div><div class="pin-val hidden"></div>', iconSize: [16, 16] }) }).addTo(map);
@@ -1428,6 +1458,8 @@ export default {
         // Tocar un embalse abre su ficha
         const res = S.reservoirs ? S.field.reservoirAt(e.containerPoint) : null;
         if (res) { openReservoir(res); return; }
+        const gau = S.gauges ? S.field.gaugeAt(e.containerPoint) : null;
+        if (gau) { openGauge(gau); return; }
         const hit = S.cities ? S.field.labelAt(e.containerPoint) : null;
         if (hit) { prefetchPlace(hit); clickTimer = setTimeout(() => openPlace(hit), 280); return; }
         showPick(e.latlng);
@@ -1435,7 +1467,7 @@ export default {
       });
       // Manita sobre los nombres, para que se vea que se pueden tocar
       map.on('mousemove', (e) => {
-        map.getContainer().style.cursor = (S.cities && S.field.labelAt(e.containerPoint)) || (S.reservoirs && S.field.reservoirAt(e.containerPoint)) ? 'pointer' : '';
+        map.getContainer().style.cursor = (S.cities && S.field.labelAt(e.containerPoint)) || (S.reservoirs && S.field.reservoirAt(e.containerPoint)) || (S.gauges && S.field.gaugeAt(e.containerPoint)) ? 'pointer' : '';
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
       // Punto de mira del móvil

@@ -335,6 +335,8 @@ export class FieldLayer {
     this.dotBoxes = [];
     // Embalses: primero los puntos (los nombres de ciudades los esquivan) y al final su porcentaje donde quepa
     const res = this.reservoirs?.length ? this._reservoirDots(ctx) : null;
+    this.gaugeHits = [];
+    if (this.gauges?.length) this._gauges(ctx);
     if (this.style.cities && this.cities) this._cityLabels(ctx);
     if (res) this._reservoirLabels(ctx, res);
     if (isoLabels) this._isoLabels(ctx, isoLabels);
@@ -430,6 +432,53 @@ export class FieldLayer {
     }
     ctx.restore();
   }
+  // ---------- Pluviómetros: etiqueta con los mm medidos (los que más han recogido, primero) ----------
+  // gauges: [{ lat, lon, val, text, bg, fg, ... }] ordenados de más a menos lluvia (o null para quitarlos)
+  setGauges(list) { this.gauges = list; this._queue({ iso: true }); }
+
+  _gauges(ctx) {
+    const geo = this.geo;
+    const placed = [];
+    ctx.save();
+    ctx.font = '700 11px Roboto, "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const g of this.gauges) {
+      const [x, y] = this._toCanvas(g.lat, g.lon);
+      if (x < 4 || y < 4 || x > geo.w - 4 || y > geo.h - 4) continue;
+      const w = ctx.measureText(g.text).width + 10, h = 17;
+      const bx = x - w / 2, by = y - h / 2;
+      let hit = false;
+      for (const b of this.avoid || []) if (bx < b[0] + geo.ox + b[2] && bx + w > b[0] + geo.ox && by < b[1] + geo.oy + b[3] && by + h > b[1] + geo.oy) { hit = true; break; }
+      if (!hit) for (const b of placed) if (bx - 3 < b[0] + b[2] && bx + w + 3 > b[0] && by - 3 < b[1] + b[3] && by + h + 3 > b[1]) { hit = true; break; }
+      if (hit) continue;
+      placed.push([bx, by, w, h]);
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur = 4;
+      ctx.fillStyle = g.bg;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, w, h, 8.5);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+      ctx.fillStyle = g.fg;
+      ctx.fillText(g.text, x, y + 0.5);
+      this.dotBoxes.push([bx, by, w, h]);
+      this.gaugeHits.push({ g, x: x - geo.ox, y: y - geo.oy, w, h });
+    }
+    ctx.restore();
+  }
+  gaugeAt(pt) {
+    for (const h of this.gaugeHits || []) {
+      // Las coordenadas guardadas son del contenedor en el momento de dibujar: se recalculan por si el mapa se movió
+      const p = this.map.latLngToContainerPoint([h.g.lat, h.g.lon]);
+      if (Math.abs(pt.x - p.x) <= h.w / 2 + 4 && Math.abs(pt.y - p.y) <= h.h / 2 + 4) return h.g;
+    }
+    return null;
+  }
+
   // Embalse bajo un punto de la pantalla (coordenadas del contenedor del mapa)
   reservoirAt(pt) {
     let best = null, bd = Infinity;

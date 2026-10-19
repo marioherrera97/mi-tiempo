@@ -338,3 +338,7 @@ body.map-mode { background: #2b2b2b; }
 .rv-pop .rv-sub { color: #aab; }
 .rv-pop-meta { color: #99a; font-size: 12px; margin-top: 6px; }
 .rv-pop-in > a { display: inline-block; margin-top: 8px; color: #7fbcff; font-weight: 600; text-decoration: none; }
+
+.pv-pop-grid { display: grid; grid-template-columns: auto auto; gap: 3px 16px; margin: 4px 0 2px; }
+.pv-pop-grid span { color: #aab; }
+.pv-pop-grid b { text-align: right; font-weight: 650; }

@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v43';
+const VERSION = 'v44';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -74,8 +74,8 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Embalses: cambian cada semana; primero red y, sin conexión, la última copia
-  if (url.origin === self.location.origin && url.pathname.endsWith('/vendor/embalses.json')) {
+  // Embalses (cada semana) y pluviómetros (cada hora): primero red y, sin conexión, la última copia
+  if (url.origin === self.location.origin && (url.pathname.endsWith('/vendor/embalses.json') || url.pathname.endsWith('/data/pluviometros.json'))) {
     e.respondWith(fetch(req).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(DATA).then((c) => c.put(req, copy)); }
       return res;

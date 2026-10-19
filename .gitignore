@@ -4,3 +4,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 data/
+
+# Claves privadas (nunca a git)
+AEMET_KEY*
+*.key
+.env

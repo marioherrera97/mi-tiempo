@@ -1,5 +1,7 @@
-# Publica Mi Tiempo en GitHub Pages junto con los datos propios del ECMWF para el mapa.
-# Se ejecuta al subir cambios y cada 6 horas (cuando el ECMWF publica una pasada nueva).
+# Publica Mi Tiempo en GitHub Pages junto con los datos propios del ECMWF para el mapa
+# y la lluvia de los pluviómetros de AEMET.
+# Se ejecuta al subir cambios y cada hora: los pluviómetros cambian cada hora y el ECMWF solo se descarga
+# cuando hay una pasada nueva (cada 6 horas; si no la hay, ese paso termina en segundos).
 # Los datos no se guardan en Git: viven en la caché de Actions y en la web publicada.
 name: Publicar web y datos ECMWF
 
@@ -7,7 +9,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '20 2,8,14,20 * * *'
+    - cron: '40 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -45,6 +47,21 @@ jobs:
 
       - name: Descargar y convertir ECMWF
         run: python pipeline/ecmwf.py data/ecmwf
+
+      # Lluvia de las últimas horas en cada pluviómetro: AEMET solo da ~12 h, así que se va guardando
+      # lo de cada hora (fuera de la web publicada) para poder sumar 24 h
+      - name: Caché de pluviómetros AEMET
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/aemet
+          key: aemet-${{ github.run_id }}
+          restore-keys: aemet-
+
+      - name: Pluviómetros AEMET
+        continue-on-error: true
+        env:
+          AEMET_KEY: ${{ secrets.AEMET_KEY }}
+        run: python pipeline/pluviometros.py "${{ runner.temp }}/aemet/estado.json" data/pluviometros.json
 
       - uses: actions/configure-pages@v5
 

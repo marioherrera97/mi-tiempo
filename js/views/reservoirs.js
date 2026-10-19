@@ -8,29 +8,29 @@ import { loading, errorBox } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 
 let data = null;
-const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
+export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
   if (!r.ok) throw new Error(`Error HTTP ${r.status}`);
   return r.json();
 }).catch((e) => { data = null; throw e; }));
 
 // Colores por porcentaje de llenado, como embalses.net (rojo vacío → azul lleno)
-const fillColor = (p) => (p < 20 ? '#e5484d' : p < 40 ? '#f08c3c' : p < 60 ? '#e9c13b' : p < 80 ? '#4fa3ff' : '#2f6fe0');
-const pc = (a, b) => (b ? (100 * a) / b : 0);
+export const fillColor = (p) => (p < 20 ? '#e5484d' : p < 40 ? '#f08c3c' : p < 60 ? '#e9c13b' : p < 80 ? '#4fa3ff' : '#2f6fe0');
+export const pc = (a, b) => (b ? (100 * a) / b : 0);
 // Los datos vienen casi siempre en hm³ enteros: los decimales solo cuando los hay
 const num = (v) => (Math.abs(v) >= 100 || Math.abs(v - Math.round(v)) < 0.05 ? Math.round(v).toLocaleString('es-ES') : v.toFixed(1).replace('.', ','));
-const hm3 = (v) => num(v) + ' hm³';
+export const hm3 = (v) => num(v) + ' hm³';
 const p1 = (v) => v.toFixed(1).replace('.', ',') + ' %';
 // Variación con signo y color (verde si sube el agua, rojo si baja)
-const delta = (d, unit = ' hm³') => {
+export const delta = (d, unit = ' hm³') => {
   if (!f.isNum(d) || Math.abs(d) < 0.05) return '<span class="rv-d">=</span>';
   const v = num(Math.abs(d));
   return `<span class="rv-d ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'} ${v}${unit}</span>`;
 };
 // Nombres como en el boletín («Pardo, El», «Vellón,El-(Pedrezuela)») escritos de forma natural
-const nice = (n) => n
+export const nice = (n) => n
   .replace(/^(.*?),\s*(El|La|Los|Las|As|Os|O|A|Nª Sª de)\b(.*)$/, '$2 $1$3')
   .replace(/-?\(/g, ' (').replace(/\s+/g, ' ').trim();
-const bar = (p) => `<div class="rv-bar"><i style="width:${Math.min(100, Math.max(0, p)).toFixed(1)}%;background:${fillColor(p)}"></i></div>`;
+export const bar = (p) => `<div class="rv-bar"><i style="width:${Math.min(100, Math.max(0, p)).toFixed(1)}%;background:${fillColor(p)}"></i></div>`;
 const distKm = (a, b, c, d) => {
   const R = 6371, r = Math.PI / 180;
   const x = Math.sin(((c - a) * r) / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(((d - b) * r) / 2) ** 2;

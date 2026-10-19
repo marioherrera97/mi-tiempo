@@ -8,6 +8,7 @@ import { gradientCSS, colorAt } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
 import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
+import * as rv from './reservoirs.js';
 import { getForecast } from '../data.js';
 import { wxIcon } from '../icons.js';
 import * as own from '../owndata.js';
@@ -111,7 +112,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), reservoirs: load('map.reservoirs', false), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -1086,6 +1087,30 @@ function openPlace(hit) {
 }
 // Al tocar un nombre se empieza a descargar su pronóstico sin esperar a descartar el doble toque
 const prefetchPlace = (hit) => api.forecast(hit, settings.model).catch(() => {});
+// ---------- Embalses en el mapa (como embalses.net) ----------
+function showReservoirs() {
+  if (!S.reservoirs) { S.field.setReservoirs(null); S.map.closePopup(); return; }
+  rv.getData().then((d) => {
+    if (!S.reservoirs) return;
+    S.field.setReservoirs(d.res.filter((r) => f.isNum(r[8])).map((r) => {
+      const pct = rv.pc(r[3], r[2]);
+      return { r, name: rv.nice(r[0]), lat: r[8], lon: r[9], cap: r[2], pct, color: rv.fillColor(pct), basin: d.basins[r[1]].name };
+    }));
+  }).catch(() => toast('No se pudieron cargar los embalses'));
+}
+// Ficha de un embalse al tocarlo
+function openReservoir(x) {
+  const [, , cap, cur, prev, year] = x.r;
+  const html = `<div class="rv-pop-in">
+    <div class="rv-top"><b>${f.esc(x.name)}</b><span class="rv-pct" style="color:${x.color}">${Math.round(x.pct)} %</span></div>
+    ${rv.bar(x.pct)}
+    <div class="rv-sub"><span>${rv.hm3(cur)} de ${rv.hm3(cap)}</span>${rv.delta(f.isNum(prev) ? cur - prev : null)}</div>
+    <div class="rv-pop-meta">${f.esc(x.basin)}${f.isNum(year) ? ` · hace un año ${Math.round(rv.pc(year, cap))} %` : ''}</div>
+    <a href="#/embalses">Ver todos los embalses ›</a></div>`;
+  L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+    .setLatLng([x.lat, x.lon]).setContent(html).openOn(S.map);
+}
+
 function closePicker() {
   S.pick = null;
   S.crossOn = false;
@@ -1150,6 +1175,7 @@ function buildMenu() {
     ${tog('relief', 'Relieve del terreno', S.relief)}
     ${tog('borders', 'Costas, fronteras y provincias', S.borders)}
     ${tog('water', 'Lagos y embalses', S.water)}
+    ${tog('reservoirs', 'Embalses: % de llenado', S.reservoirs)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
@@ -1175,6 +1201,7 @@ function buildMenu() {
     if (name === 'relief') { S.relief = checked; save('map.relief', checked); if (checked) S.reliefLayer.addTo(S.map); else S.map.removeLayer(S.reliefLayer); }
     if (name === 'borders') { S.borders = checked; save('map.borders', checked); showBorders(); }
     if (name === 'water') { S.water = checked; save('map.water', checked); showWater(); }
+    if (name === 'reservoirs') { S.reservoirs = checked; save('map.reservoirs', checked); showReservoirs(); }
     if (name === 'cities') {
       S.cities = checked;
       save('map.cities', checked);
@@ -1381,6 +1408,7 @@ export default {
       map.on('moveend', loadPlaceTiles);
       map.whenReady(() => loadPlaceTiles());
       updatePlaces();
+      showReservoirs();
       on('favorites', updatePlaces);
       // El punto se puede arrastrar: el valor de la burbuja cambia mientras se mueve
       S.marker = L.marker([state.place.lat, state.place.lon], { draggable: true, autoPan: true, icon: L.divIcon({ className: '', html: '<div class="pin"></div><div class="pin-val hidden"></div>', iconSize: [16, 16] }) }).addTo(map);
@@ -1397,6 +1425,9 @@ export default {
       map.on('click', (e) => {
         clearTimeout(clickTimer);
         // Tocar el nombre de una localidad abre su pronóstico
+        // Tocar un embalse abre su ficha
+        const res = S.reservoirs ? S.field.reservoirAt(e.containerPoint) : null;
+        if (res) { openReservoir(res); return; }
         const hit = S.cities ? S.field.labelAt(e.containerPoint) : null;
         if (hit) { prefetchPlace(hit); clickTimer = setTimeout(() => openPlace(hit), 280); return; }
         showPick(e.latlng);
@@ -1404,7 +1435,7 @@ export default {
       });
       // Manita sobre los nombres, para que se vea que se pueden tocar
       map.on('mousemove', (e) => {
-        map.getContainer().style.cursor = S.cities && S.field.labelAt(e.containerPoint) ? 'pointer' : '';
+        map.getContainer().style.cursor = (S.cities && S.field.labelAt(e.containerPoint)) || (S.reservoirs && S.field.reservoirAt(e.containerPoint)) ? 'pointer' : '';
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
       // Punto de mira del móvil

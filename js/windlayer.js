@@ -332,7 +332,11 @@ export class FieldLayer {
     // Los números de las isolíneas se ponen al final, donde no pisen los nombres de las ciudades
     const isoLabels = this.style.iso && g.vars[this.style.iso.var] ? this._isolines(ctx, this.style.iso) : null;
     this.cityBoxes = [];
+    this.dotBoxes = [];
+    // Embalses: primero los puntos (los nombres de ciudades los esquivan) y al final su porcentaje donde quepa
+    const res = this.reservoirs?.length ? this._reservoirDots(ctx) : null;
     if (this.style.cities && this.cities) this._cityLabels(ctx);
+    if (res) this._reservoirLabels(ctx, res);
     if (isoLabels) this._isoLabels(ctx, isoLabels);
     if (this.style.values && g.vars[this.style.values.var]) this._values(ctx, this.style.values);
   }
@@ -341,6 +345,101 @@ export class FieldLayer {
   // cities: [[nombre, lat, lon, minZoom], ...] ordenadas por importancia; extra: lugares propios (favoritos)
   setCities(cities) { this.cities = cities; this._queue({ iso: true }); }
   setPlaces(places) { this.places = places || []; this._queue({ iso: true }); }
+  // reservoirs: [{ name, lat, lon, pct, cap, color, ... }] (o null para quitarlos)
+  setReservoirs(list) { this.reservoirs = list; this._queue({ iso: true }); }
+
+  // ---------- Embalses (como el mapa de embalses.net): punto del color de su llenado, tamaño según capacidad ----------
+  _reservoirDots(ctx) {
+    const geo = this.geo;
+    const z = this.map.getZoom();
+    const k = Math.min(1.6, Math.max(0.7, (z - 4) / 3)); // más grandes al acercarse
+    this.resHits = [];
+    const vis = [];
+    for (const r of this.reservoirs) {
+      const [x, y] = this._toCanvas(r.lat, r.lon);
+      if (x < -20 || y < -20 || x > geo.w + 20 || y > geo.h + 20) continue;
+      const rad = Math.min(13, Math.max(3.5, (2.2 + Math.sqrt(r.cap) / 5.5) * k));
+      vis.push({ r, x, y, rad });
+    }
+    // Los pequeños debajo y los grandes encima
+    vis.sort((a, b) => a.r.cap - b.r.cap);
+    ctx.save();
+    for (const v of vis) {
+      ctx.beginPath();
+      ctx.arc(v.x, v.y, v.rad, 0, Math.PI * 2);
+      ctx.fillStyle = v.r.color;
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 3;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.stroke();
+      this.dotBoxes.push([v.x - v.rad - 2, v.y - v.rad - 2, 2 * v.rad + 4, 2 * v.rad + 4]);
+      this.resHits.push({ r: v.r, rad: v.rad });
+    }
+    ctx.restore();
+    return vis;
+  }
+
+  _reservoirLabels(ctx, vis) {
+    const geo = this.geo;
+    const z = this.map.getZoom();
+    if (z < 6) return; // de lejos solo los puntos
+    const withName = z >= 8;
+    // Al alejarse, solo el porcentaje de los grandes para no saturar
+    const minCap = z < 7 ? 300 : z < 8 ? 80 : 0;
+    const boxes = this.cityBoxes;
+    const placed = [];
+    const free = (x, y, w, h) => {
+      if (x < 4 || y < 4 || x + w > geo.w - 4 || y + h > geo.h - 4) return false;
+      for (const b of this.avoid || []) if (x < b[0] + geo.ox + b[2] && x + w > b[0] + geo.ox && y < b[1] + geo.oy + b[3] && y + h > b[1] + geo.oy) return false;
+      for (const b of [...boxes, ...placed]) if (x - 4 < b[0] + b[2] && x + w + 4 > b[0] && y - 3 < b[1] + b[3] && y + h + 3 > b[1]) return false;
+      for (const b of this.dotBoxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false;
+      return true;
+    };
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    // Primero los más grandes
+    for (const v of [...vis].sort((a, b) => b.r.cap - a.r.cap)) {
+      if (v.r.cap < minCap) break;
+      const pct = `${Math.round(v.r.pct)} %`;
+      ctx.font = '700 11.5px Roboto, "Segoe UI", system-ui, sans-serif';
+      const wp = ctx.measureText(pct).width;
+      ctx.font = '500 10.5px Roboto, "Segoe UI", system-ui, sans-serif';
+      const wn = withName ? ctx.measureText(v.r.name).width : 0;
+      const w = Math.max(wp, wn) + 2, h = withName ? 26 : 13;
+      const x = v.x + v.rad + 4, y = v.y - h / 2;
+      if (!free(x, y, w, h)) continue;
+      placed.push([x, y, w, h]);
+      const ty = withName ? v.y - 6 : v.y;
+      ctx.font = '700 11.5px Roboto, "Segoe UI", system-ui, sans-serif';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeText(pct, x, ty);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(pct, x, ty);
+      if (withName) {
+        ctx.font = '500 10.5px Roboto, "Segoe UI", system-ui, sans-serif';
+        ctx.strokeText(v.r.name, x, ty + 13);
+        ctx.fillStyle = '#e8f1ff';
+        ctx.fillText(v.r.name, x, ty + 13);
+      }
+    }
+    ctx.restore();
+  }
+  // Embalse bajo un punto de la pantalla (coordenadas del contenedor del mapa)
+  reservoirAt(pt) {
+    let best = null, bd = Infinity;
+    for (const h of this.resHits || []) {
+      const p = this.map.latLngToContainerPoint([h.r.lat, h.r.lon]);
+      const d = Math.hypot(pt.x - p.x, pt.y - p.y);
+      if (d <= h.rad + 8 && d < bd) { best = h.r; bd = d; }
+    }
+    return best;
+  }
 
   _cityLabels(ctx) {
     const geo = this.geo;
@@ -355,6 +454,7 @@ export class FieldLayer {
       // avoid viene en coordenadas del mapa; el lienzo está desplazado (ox, oy)
       for (const b of this.avoid || []) if (x < b[0] + geo.ox + b[2] && x + w > b[0] + geo.ox && y < b[1] + geo.oy + b[3] && y + h > b[1] + geo.oy) return false;
       for (const b of boxes) if (x - mx < b[0] + b[2] && x + w + mx > b[0] && y - my < b[1] + b[3] && y + h + my > b[1]) return false;
+      for (const b of this.dotBoxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return false;
       boxes.push([x, y, w, h]);
       return true;
     };

@@ -327,3 +327,14 @@ body.map-mode { background: #2b2b2b; }
   .wd-about { padding: 8px 14px; font-size: 12.5px; line-height: 1.35; }
   .wd-about h4 { font-size: 15px; }
 }
+
+/* Ficha de un embalse en el mapa */
+.rv-pop .leaflet-popup-content-wrapper { background: rgba(42,43,48,.97); color: #f2f3f5; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+.rv-pop .leaflet-popup-tip { background: rgba(42,43,48,.97); }
+.rv-pop .leaflet-popup-content { margin: 12px 14px; font-size: 13px; line-height: 1.35; }
+.rv-pop a.leaflet-popup-close-button { color: #bbb; top: 4px; right: 4px; }
+.rv-pop .rv-top { margin: 0 14px 6px 0; }
+.rv-pop .rv-bar { background: rgba(255,255,255,.12); }
+.rv-pop .rv-sub { color: #aab; }
+.rv-pop-meta { color: #99a; font-size: 12px; margin-top: 6px; }
+.rv-pop-in > a { display: inline-block; margin-top: 8px; color: #7fbcff; font-weight: 600; text-decoration: none; }

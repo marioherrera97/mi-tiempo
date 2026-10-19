@@ -446,6 +446,19 @@ export class FieldLayer {
     for (const g of this.gauges) {
       const [x, y] = this._toCanvas(g.lat, g.lon);
       if (x < 4 || y < 4 || x > geo.w - 4 || y > geo.h - 4) continue;
+      // Pluviómetro seco: punto pequeño sin número (se ve la red y al tocarlo salen sus 0 mm)
+      if (g.zero) {
+        if (placed.some((b) => x > b[0] - 3 && x < b[0] + b[2] + 3 && y > b[1] - 3 && y < b[1] + b[3] + 3)) continue;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(235,240,245,0.85)';
+        ctx.fill();
+        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.stroke();
+        this.gaugeHits.push({ g, x: x - geo.ox, y: y - geo.oy, w: 8, h: 8 });
+        continue;
+      }
       const w = ctx.measureText(g.text).width + 10, h = 17;
       const bx = x - w / 2, by = y - h / 2;
       let hit = false;

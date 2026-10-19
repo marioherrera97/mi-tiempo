@@ -1108,10 +1108,11 @@ function showGauges() {
   const draw = () => rv.getAllGauges().then((d) => {
     if (!S.gauges) return;
     const w = rv.gaugeWindow(d);
-    S.field.setGauges(d.st.filter((r) => rv.gaugeVal(r, w) >= 0.1).sort((a, b) => rv.gaugeVal(b, w) - rv.gaugeVal(a, w)).map((r) => {
+    // Los que han recogido lluvia, con su valor (primero los que más); los secos, como punto pequeño al final
+    S.field.setGauges(d.st.filter((r) => f.isNum(rv.gaugeVal(r, w))).sort((a, b) => rv.gaugeVal(b, w) - rv.gaugeVal(a, w)).map((r) => {
       const v = rv.gaugeVal(r, w);
       const [bg, fg] = rv.rainColor(v);
-      return { r, d, w, lat: r[2], lon: r[3], val: v, text: f.precip(v, false), bg, fg };
+      return { r, d, w, lat: r[2], lon: r[3], val: v, zero: v < 0.1, text: f.precip(v, false), bg, fg };
     }));
   }).catch(() => { S.field.setGauges(null); toast('Todavía no hay datos de pluviómetros'); S.gauges = false; save('map.gauges', false); buildMenu(); });
   draw();

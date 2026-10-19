@@ -29,6 +29,7 @@ import html as htmlmod
 import json
 import math
 import re
+import ssl
 import sys
 import time
 import unicodedata
@@ -63,6 +64,18 @@ def http(url, data=None, headers=None, timeout=60, opener=None, form=False):
         return raw.decode('utf-8')
     except UnicodeDecodeError:
         return raw.decode('latin-1')
+
+
+def retry(fn, tries=3, wait=10):
+    """Algunos servidores tardan o fallan de vez en cuando desde fuera de España: se reintenta con pausa."""
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if k == tries - 1:
+                raise
+            print(f'  reintento {k + 1}: {e}')
+            time.sleep(wait * (k + 1))
 
 
 def num(s):
@@ -279,7 +292,7 @@ EBRO = 'https://www.saihebro.com/api/'
 
 def fetch_ebro(state, coords):
     hourly = Hourly(state, 'ebro')
-    plu = json.loads(http(EBRO + 'pluviometrias/getTablaPluviometrias', timeout=90))
+    plu = json.loads(retry(lambda: http(EBRO + 'pluviometrias/getTablaPluviometrias', timeout=150)))
     new = 0
     gauges = []
     for r in plu:
@@ -300,7 +313,7 @@ def fetch_ebro(state, coords):
         hourly.add(code, HOUR, r.get('col1'))
         p = hourly.sums(code, HOUR, [r.get('col1'), None, None, r.get('col3')])
         gauges.append(gauge(f'E-{code}', r['nombre'], ll[0], ll[1], p, iso(NOW.replace(minute=0)), 'SAIH Ebro'))
-    vols = json.loads(http(EBRO + 'principal/getVolumenesEmbalsados'))['volumenes']
+    vols = json.loads(retry(lambda: http(EBRO + 'principal/getVolumenesEmbalsados', timeout=150)))['volumenes']
     reservoirs = []
     for k, v in vols.items():
         if k == 'cuenca' or not v.get('data') or len(v['data']) < 2:
@@ -436,7 +449,10 @@ def fetch_minosil(state, coords):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):
             return None
-    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()), NoRedirect)
+    # Su servidor no envía el certificado intermedio de la FNMT: se añade aquí (fuera de Windows la verificación fallaría)
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(Path(__file__).with_name('fnmt-ac-componentes.pem'))
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()), NoRedirect, urllib.request.HTTPSHandler(context=ctx))
     # Sin Accept-Language la sesión no queda configurada y todo redirige a la portada
     op.addheaders = [('Accept-Language', 'es-ES,es;q=0.9'), ('Accept', 'text/html')]
     try:

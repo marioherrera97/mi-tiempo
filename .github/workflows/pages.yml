@@ -63,6 +63,11 @@ jobs:
           AEMET_KEY: ${{ secrets.AEMET_KEY }}
         run: python pipeline/pluviometros.py "${{ runner.temp }}/aemet/estado.json" data/pluviometros.json
 
+      # Embalses y pluviómetros en tiempo real de las redes SAIH, ACA, Hidrosur y MeteoGalicia (toda España)
+      - name: Redes hidrológicas en tiempo real
+        continue-on-error: true
+        run: python pipeline/saih.py "${{ runner.temp }}/aemet/saih.json" data/saih.json
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

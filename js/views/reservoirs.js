@@ -26,6 +26,54 @@ export const getGauges = () => {
   }
   return gauges;
 };
+// ---------- SAIH (confederaciones hidrográficas): embalses y pluviómetros en tiempo real (data/saih.json) ----------
+let saih = null, saihAt = 0;
+export const getSaih = () => {
+  if (!saih || Date.now() - saihAt > 20 * 60e3) {
+    saihAt = Date.now();
+    saih = fetch('data/saih.json').then((r) => {
+      if (!r.ok) throw new Error('Sin datos del SAIH');
+      return r.json();
+    }).catch((e) => { saih = null; throw e; });
+  }
+  return saih;
+};
+// Pluviómetros de AEMET y del SAIH juntos, en el formato de AEMET más la fuente al final
+export const getAllGauges = async () => {
+  const [a, sh] = await Promise.all([getGauges().catch(() => null), getSaih().catch(() => null)]);
+  if (!a && !sh) throw new Error('Todavía no hay datos de pluviómetros');
+  const st = (a?.st || []).map((r) => [...r, 'AEMET']);
+  // Las de las redes hidrológicas ya traen sus sumas de 1, 6, 12 y 24 h (con 24 en «horas con dato»)
+  for (const g of sh?.gauges || []) st.push([g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], 24, g[10]]);
+  return { updated: a?.updated || sh?.updated, st, hasAemet: !!a };
+};
+
+// Embalse del boletín semanal ↔ embalse con dato en tiempo real (mismo nombre y a menos de 25 km)
+// Sin art\u00edculos ni \u00abde\u00bb: \u00abTranco Beas\u00bb = \u00abTranco de Beas\u00bb
+const STOP = new Set(['de', 'del', 'el', 'la', 'los', 'las', 'l', 'o', 'a', 'as', 'os', 'y', 'e', 'd', 'embalse', 'presa', 'pantano', 'embassament', 'encoro', 'azud']);
+const plain = (n) => nice(n).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => !STOP.has(w)).join(' ');
+export function liveFor(d, sh) {
+  const out = new Map();
+  if (!sh?.reservoirs) return out;
+  for (const L of sh.reservoirs) {
+    const ln = plain(L.name);
+    if (!ln) continue;
+    let best = null, bd = Infinity;
+    d.res.forEach((r, i) => {
+      const rn = plain(r[0]);
+      if (!rn || !(rn === ln || ln.startsWith(rn + ' ') || rn.startsWith(ln + ' '))) return;
+      const km = f.isNum(r[8]) ? distKm(L.lat, L.lon, r[8], r[9]) : 0;
+      if (km < 25 && km < bd) { best = i; bd = km; }
+    });
+    if (best !== null) out.set(best, L);
+  }
+  return out;
+}
+const liveTime = (L) => new Date(L.t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+// Línea «Ahora» con el dato en tiempo real de un embalse
+export const liveLine = (L) => `<div class="rv-live"><span class="rv-dot"></span>Ahora <b style="color:${fillColor(L.pct)}">${p1(L.pct)}</b> · ${hm3(L.vol)}${f.isNum(L.d24) ? ` · 24 h ${delta(L.d24)}` : ''}<small>${f.esc(L.src)}, ${liveTime(L)}</small></div>`;
+
 // [indicativo, nombre, lat, lon, altitud, 1 h, 6 h, 12 h, 24 h, horas con dato]
 const GAUGE_COL = { 1: 5, 6: 6, 12: 7, 24: 8 };
 export const gaugeVal = (r, w) => r[GAUGE_COL[w]];
@@ -56,13 +104,13 @@ function renderGauges(box, d) {
   };
   box.innerHTML = `
     <div class="card">
-      <div class="card-head"><h2>Pluviómetros cerca</h2><span class="tiny">AEMET · hasta las ${gaugeTime(d)}</span></div>
+      <div class="card-head"><h2>Pluviómetros cerca</h2><span class="tiny">hasta las ${gaugeTime(d)}</span></div>
       ${near.length ? `<div class="pv-table-wrap"><table class="pv-table">
         <thead><tr><th></th><th>1 h</th><th>6 h</th><th>12 h</th><th>24 h</th></tr></thead>
-        <tbody>${near.map(([r, km]) => `<tr><th><b>${f.esc(stationName(r[1]))}</b><small>${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''}</small></th>
+        <tbody>${near.map(([r, km]) => `<tr><th><b>${f.esc(stationName(r[1]))}</b><small>${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(r[10] || 'AEMET')}</small></th>
           ${cell(r[5])}${cell(r[6])}${cell(r[7])}${cell(r[8])}</tr>`).join('')}</tbody></table></div>`
         : '<p class="note">No hay ningún pluviómetro de AEMET a menos de 60 km de este lugar.</p>'}
-      <p class="note">Lluvia medida en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()} por las estaciones automáticas de AEMET (datos sin validar).
+      <p class="note">Lluvia medida en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()} por las estaciones de AEMET, de las redes SAIH de las confederaciones hidrográficas, de la ACA, de Hidrosur y de MeteoGalicia (datos sin validar).
         ${w === 12 ? 'Las 24 h estarán completas cuando el proceso horario lleve un día funcionando.' : ''}</p>
     </div>
     ${top.length ? `<div class="card"><div class="card-head"><h2>Donde más ha llovido</h2><span class="tiny">últimas ${w} h</span></div>
@@ -112,7 +160,7 @@ function spark(series, cap) {
 }
 
 // Fila de un embalse; al tocarla se despliega su detalle
-function resRow(r, basinName, dist) {
+function resRow(r, basinName, dist, live) {
   const [name, , cap, cur, prev, year, avg10, elec, , , series] = r;
   const p = pc(cur, cap);
   return `<details class="rv-res">
@@ -122,6 +170,7 @@ function resRow(r, basinName, dist) {
         <span class="rv-pct" style="color:${fillColor(p)}">${Math.round(p)} %</span></div>
       ${bar(p)}
       <div class="rv-sub"><span>${hm3(cur)} de ${hm3(cap)}</span>${delta(f.isNum(prev) ? cur - prev : null)}</div>
+      ${live ? liveLine(live) : ''}
     </summary>
     <div class="rv-more">
       ${spark(series, cap)}
@@ -135,7 +184,8 @@ function resRow(r, basinName, dist) {
   </details>`;
 }
 
-function renderReservoirs(box, d) {
+function renderReservoirs(box, d, sh) {
+  const live = liveFor(d, sh);
   const t = d.total;
   const p = pc(t.cur, t.cap);
   const upd = f.dateShort(d.updated) + ' ' + d.updated.slice(0, 4);
@@ -163,7 +213,13 @@ function renderReservoirs(box, d) {
     <div class="card"><div class="card-head"><h2>Este año y el anterior</h2><span class="tiny">% de capacidad</span></div>
       <div class="chart-box short"><canvas id="rvChart"></canvas></div></div>
     ${near.length ? `<div class="section-title">Embalses cerca de ${f.esc(here.name)}</div>
-      <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km)).join('')}</div>` : ''}
+      <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)))).join('')}</div>` : ''}
+    ${sh?.reservoirs?.length ? `<div class="section-title">En tiempo real cerca de ${f.esc(here.name)}</div>
+      <div class="card rv-list rv-livelist">${sh.reservoirs.map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow">
+        <div class="rv-top"><b>${f.esc(stationName(L.name))}</b><span class="rv-n">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(L.basin)}</span><span class="rv-pct" style="color:${fillColor(L.pct)}">${Math.round(L.pct)} %</span></div>
+        ${bar(L.pct)}
+        <div class="rv-sub"><span>${hm3(L.vol)} · ${f.esc(L.src)}, ${liveTime(L)}</span>${f.isNum(L.d24) ? `<span>24 h ${delta(L.d24)}</span>` : ''}</div></div>`).join('')}</div>
+      <p class="note rv-livenote">${sh.reservoirs.length} embalses con dato en tiempo real en toda España (redes SAIH, ACA e Hidrosur). Los del Segura, el Cantábrico, Galicia Costa y el País Vasco solo tienen el boletín semanal.</p>` : ''}
     <div class="section-title">Por cuencas</div>
     <div class="card rv-list">${d.basins.map((b, i) => {
       const bp = pc(b.cur, b.cap);
@@ -174,7 +230,7 @@ function renderReservoirs(box, d) {
           ${bar(bp)}
           <div class="rv-sub"><span>${hm3(b.cur)} de ${hm3(b.cap)} · hace un año ${Math.round(pc(b.year, b.cap))} %</span>${delta(b.cur - b.prev)}</div>
         </summary>
-        <div class="rv-inner">${list.map((r) => resRow(r, b.name)).join('')}</div>
+        <div class="rv-inner">${list.map((r) => resRow(r, b.name, undefined, live.get(d.res.indexOf(r)))).join('')}</div>
       </details>`;
     }).join('')}</div>
 `;
@@ -319,15 +375,16 @@ export default {
     el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
-      Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData.
+      Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar y Miño-Sil, ACA, Hidrosur y MeteoGalicia.
+      Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData y las redes anteriores.
       Lluvia del año: Open-Meteo y ERA5 (Copernicus).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');
     loading(resBox, 'Cargando embalses…');
-    const res = getData().then((d) => renderReservoirs(resBox, d)).catch((e) => errorBox(resBox, e, () => this.render(el)));
+    const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => renderReservoirs(resBox, d, sh)).catch((e) => errorBox(resBox, e, () => this.render(el)));
     const rain = renderRain(rainBox).catch((e) => errorBox(rainBox, e, () => renderRain(rainBox)));
     const gBox = el.querySelector('#rvGauges');
     // Sin datos de pluviómetros (aún no publicados) la sección simplemente no aparece
-    const gau = getGauges().then((d) => renderGauges(gBox, d)).catch(() => { gBox.innerHTML = ''; });
+    const gau = getAllGauges().then((d) => renderGauges(gBox, d)).catch(() => { gBox.innerHTML = ''; });
     await Promise.all([res, rain, gau]);
   },
 };

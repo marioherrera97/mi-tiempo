@@ -1090,11 +1090,14 @@ const prefetchPlace = (hit) => api.forecast(hit, settings.model).catch(() => {})
 // ---------- Embalses en el mapa (como embalses.net) ----------
 function showReservoirs() {
   if (!S.reservoirs) { S.field.setReservoirs(null); S.map.closePopup(); return; }
-  rv.getData().then((d) => {
+  Promise.all([rv.getData(), rv.getSaih().catch(() => null)]).then(([d, sh]) => {
     if (!S.reservoirs) return;
-    S.field.setReservoirs(d.res.filter((r) => f.isNum(r[8])).map((r) => {
-      const pct = rv.pc(r[3], r[2]);
-      return { r, name: rv.nice(r[0]), lat: r[8], lon: r[9], cap: r[2], pct, color: rv.fillColor(pct), basin: d.basins[r[1]].name };
+    const live = rv.liveFor(d, sh);
+    S.field.setReservoirs(d.res.map((r, i) => [r, i]).filter(([r]) => f.isNum(r[8])).map(([r, i]) => {
+      const L = live.get(i);
+      // Con dato en tiempo real (SAIH) se usa el porcentaje de ahora; si no, el del boletín semanal
+      const pct = L ? L.pct : rv.pc(r[3], r[2]);
+      return { r, live: L, name: rv.nice(r[0]), lat: r[8], lon: r[9], cap: r[2], pct, color: rv.fillColor(pct), basin: d.basins[r[1]].name };
     }));
   }).catch(() => toast('No se pudieron cargar los embalses'));
 }
@@ -1102,7 +1105,7 @@ function showReservoirs() {
 function showGauges() {
   clearInterval(S.gaugeTimer);
   if (!S.gauges) { S.field.setGauges(null); S.map.closePopup(); return; }
-  const draw = () => rv.getGauges().then((d) => {
+  const draw = () => rv.getAllGauges().then((d) => {
     if (!S.gauges) return;
     const w = rv.gaugeWindow(d);
     S.field.setGauges(d.st.filter((r) => rv.gaugeVal(r, w) >= 0.1).sort((a, b) => rv.gaugeVal(b, w) - rv.gaugeVal(a, w)).map((r) => {
@@ -1120,7 +1123,7 @@ function openGauge(g) {
   const html = `<div class="rv-pop-in">
     <div class="rv-top"><b>${f.esc(rv.stationName(r[1]))}</b></div>
     <div class="pv-pop-grid">${row('Última hora', r[5])}${row('6 horas', r[6])}${row('12 horas', r[7])}${row('24 horas', r[8])}</div>
-    <div class="rv-pop-meta">Pluviómetro de AEMET${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''} · hasta las ${rv.gaugeTime(g.d)}</div></div>`;
+    <div class="rv-pop-meta">Pluviómetro de ${f.esc(r[10] || 'AEMET')}${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''} · hasta las ${rv.gaugeTime(g.d)}</div></div>`;
   L.popup({ className: 'rv-pop', maxWidth: 240, minWidth: 190, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([r[2], r[3]]).setContent(html).openOn(S.map);
 }
@@ -1130,9 +1133,10 @@ function openReservoir(x) {
   const [, , cap, cur, prev, year] = x.r;
   const html = `<div class="rv-pop-in">
     <div class="rv-top"><b>${f.esc(x.name)}</b><span class="rv-pct" style="color:${x.color}">${Math.round(x.pct)} %</span></div>
-    ${rv.bar(x.pct)}
+    ${rv.bar(rv.pc(cur, cap))}
     <div class="rv-sub"><span>${rv.hm3(cur)} de ${rv.hm3(cap)}</span>${rv.delta(f.isNum(prev) ? cur - prev : null)}</div>
-    <div class="rv-pop-meta">${f.esc(x.basin)}${f.isNum(year) ? ` · hace un año ${Math.round(rv.pc(year, cap))} %` : ''}</div>
+    ${x.live ? rv.liveLine(x.live) : ''}
+    <div class="rv-pop-meta">${f.esc(x.basin)}${f.isNum(year) ? ` · hace un año ${Math.round(rv.pc(year, cap))} %` : ''}${x.live ? ' · barra: boletín semanal' : ''}</div>
     <a href="#/embalses">Ver todos los embalses ›</a></div>`;
   L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([x.lat, x.lon]).setContent(html).openOn(S.map);

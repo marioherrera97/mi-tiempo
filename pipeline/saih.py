@@ -511,7 +511,17 @@ def aca_time(s):
 
 def fetch_aca(state):
     cat = {s['sensor']: s for p in json.loads(http(ACA + 'catalog?componentType=pluviometre', timeout=90))['providers'] for s in p['sensors']}
-    data = json.loads(http(ACA + 'data/PLUVIOMETREACA-EST?limit=290', timeout=120))['sensors']
+    # La API general da solo las últimas 50 lecturas (≈4 h) por sensor: la lluvia de cada hora completa se guarda en el
+    # estado y las sumas de 6, 12 y 24 h salen de ahí. La primera vez se siembra con 200 lecturas (≈16 h) por sensor.
+    hourly = Hourly(state, 'aca')
+    data = json.loads(http(ACA + 'data/PLUVIOMETREACA-EST?limit=50', timeout=120))['sensors']
+    if not hourly.d:
+        for s in data:
+            time.sleep(0.2)
+            try:
+                s['observations'] = json.loads(http(ACA + f'data/PLUVIOMETREACA-EST/{s["sensor"]}?limit=200', timeout=60))['observations']
+            except Exception as e:  # noqa: BLE001
+                print(f'  ACA {s["sensor"]}: {e}')
     gauges = []
     for s in data:
         m = cat.get(s['sensor'])
@@ -520,15 +530,25 @@ def fetch_aca(state):
             continue
         lat, lon = map(float, m['location'].split())
         last = aca_time(obs[0]['timestamp'])
-        # Intensidad (mm/h) cada 5 min: la lluvia de cada intervalo es intensidad / 12
-        def window(h):
-            xs = [num(o['value']) for o in obs if aca_time(o['timestamp']) > last - timedelta(hours=h)]
-            xs = [x for x in xs if x is not None]
-            return round(sum(xs) / 12, 1) if len(xs) >= h * 12 * 0.75 else None
         if NOW - last > timedelta(hours=6):
             continue  # sensor parado
+        # Intensidad (mm/h) cada 5 min: la lluvia de cada intervalo es intensidad / 12. Se agrupa por horas UTC
+        # (el intervalo que termina a las HH:05..HH+1:00 cuenta en la hora HH+1, como el resto de fuentes)
+        bins = {}
+        for o in obs:
+            v = num(o['value'])
+            if v is None or v < 0:
+                continue
+            t = aca_time(o['timestamp']) - timedelta(minutes=5)
+            bins.setdefault((t + timedelta(hours=1)).strftime('%Y-%m-%dT%H'), []).append(v)
+        for hour, vs in bins.items():
+            if len(vs) >= 9:  # al menos 45 de los 60 minutos
+                hourly.add(m['component'], hour, sum(vs) / 12)
+        recent = [num(o['value']) for o in obs if aca_time(o['timestamp']) > last - timedelta(hours=1)]
+        h1 = round(sum(x for x in recent if x is not None) / 12, 1) if len(recent) >= 9 else None
         name = re.sub(r'^Pluvi[oò]metre\s+(de\s+)?', '', m.get('componentDesc') or s['sensor'])
-        gauges.append(gauge(f'A-{m["component"]}', name, lat, lon, [window(1), window(6), window(12), window(24)], iso(last), 'ACA'))
+        gauges.append(gauge(f'A-{m["component"]}', name, lat, lon, hourly.sums(m['component'], last.strftime('%Y-%m-%dT%H'), [h1, None, None, None]),
+                            iso(last), 'ACA'))
     cat = {s['sensor']: s for p in json.loads(http(ACA + 'catalog?componentType=embassament'))['providers'] for s in p['sensors']}
     data = {s['sensor']: s.get('observations') or [] for s in json.loads(http(ACA + 'data/EMBASSAMENT-EST?limit=1'))['sensors']}
     comp = {}

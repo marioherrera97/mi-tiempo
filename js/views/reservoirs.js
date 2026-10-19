@@ -125,6 +125,30 @@ export const rainColor = (mm) => {
 export const gaugeTime = (d) => new Date(d.updated).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 const mm = (v) => (f.isNum(v) ? f.precip(v, false) : '–');
 
+// SAIH Ebro: su tabla no trae 6 y 12 h, pero la ficha de cada estación tiene la lluvia hora a hora (señal PACUM,
+// las últimas ~21 h). Se pide solo para las estaciones que se muestran (tabla de cercanas y la que se toque en el mapa)
+const ebroSeries = new Map();
+export async function ebroFill(r) {
+  if (r[10] !== 'SAIH Ebro' || (f.isNum(r[6]) && f.isNum(r[7]))) return false;
+  const code = String(r[0]).replace(/^E-/, '');
+  if (!ebroSeries.has(code)) {
+    ebroSeries.set(code, (async () => {
+      const api = 'https://www.saihebro.com/api/ficha/';
+      const html = await (await fetch(`${api}procesarTablaValoresActuales?estacion=${encodeURIComponent(code)}`)).text();
+      const tag = (html.match(new RegExp(code + '[A-Z]\\d{2}PACUM')) || [])[0];
+      return tag ? (await fetch(`${api}getDatosMinigraficaSenal?tag=${tag}&tipoTag=PACUM`)).json() : null;
+    })().catch(() => null));
+  }
+  const s = await ebroSeries.get(code);
+  if (!Array.isArray(s) || s.length < 12) return false;
+  const sum = (n) => Math.round(s.slice(-n).reduce((a, b) => a + (f.isNum(b) && b > 0 ? b : 0), 0) * 10) / 10;
+  r[6] = sum(6);
+  r[7] = sum(12);
+  // Si la tabla era de antes, las 24 h no pueden quedar por debajo de lo que suma la serie
+  r[8] = Math.max(f.isNum(r[8]) ? r[8] : 0, sum(s.length));
+  return true;
+}
+
 function renderGauges(box, d) {
   const here = state.place;
   const w = gaugeWindow(d);
@@ -154,6 +178,8 @@ function renderGauges(box, d) {
         return `<div class="pv-row"><span class="pv-n">${i + 1}</span><span class="pv-name">${f.esc(stationName(r[1]))}</span>
           <span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)} ${f.precipUnit()}</span></div>`;
       }).join('')}</div></div>` : ''}`;
+  // Completa las 6 y 12 h de los pluviómetros cercanos del Ebro y vuelve a pintar la tabla
+  Promise.all(near.map(([r]) => ebroFill(r))).then((ok) => { if (ok.some(Boolean)) renderGauges(box, d); });
 }
 
 // Colores por porcentaje de llenado, como embalses.net (rojo vacío → azul lleno)

@@ -1129,10 +1129,8 @@ function openGauge(g) {
     <div class="rv-top"><b>${f.esc(rv.stationName(r[1]))}</b></div>
     <div class="pv-pop-grid">${row('Última hora', r[5])}${row('6 horas', r[6])}${row('12 horas', r[7])}${row('24 horas', r[8])}</div>
     <div class="rv-pop-meta">Pluviómetro de ${f.esc(r[10] || 'AEMET')}${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''} · hasta las ${rv.gaugeTime(g.d)}</div></div>`;
-  const pop = L.popup({ className: 'rv-pop', maxWidth: 240, minWidth: 190, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+  L.popup({ className: 'rv-pop', maxWidth: 240, minWidth: 190, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([r[2], r[3]]).setContent(html).openOn(S.map);
-  // Ebro: las 6 y 12 h llegan aparte (de la ficha de la estación)
-  rv.ebroFill(r).then((ok) => { if (ok && S.map.hasLayer(pop)) openGauge(g); });
 }
 
 // Ficha de un embalse al tocarlo

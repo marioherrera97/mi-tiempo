@@ -518,7 +518,27 @@ async function renderRain(box) {
   }
 }
 
+// #/embalses?e=índice (desde el mapa): se abre ese embalse en su cuenca, con su ficha y su previsión
+function focusReservoir(el) {
+  const i = new URLSearchParams(location.hash.split('?')[1] || '').get('e');
+  const res = i !== null && el.querySelector(`.rv-basin details.rv-res[data-i="${CSS.escape(i)}"]`);
+  if (!res) return;
+  res.closest('details.rv-basin').open = true;
+  res.open = true;
+  // Se mantiene arriba mientras termina de cargar lo de encima (cambia de altura), hasta 3 s o hasta que el usuario
+  // toque o desplace la página
+  const go = () => res.scrollIntoView({ block: 'start' });
+  const ro = new ResizeObserver(go);
+  const stop = () => { ro.disconnect(); ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => removeEventListener(t, stop)); };
+  ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => addEventListener(t, stop, { passive: true }));
+  setTimeout(() => { go(); ro.observe(el); }, 60);
+  setTimeout(stop, 3000);
+  res.classList.add('rv-flash');
+  setTimeout(() => res.classList.remove('rv-flash'), 1600);
+}
+
 export default {
+  show(el) { focusReservoir(el); },
   async render(el) {
     el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
@@ -529,7 +549,7 @@ export default {
       Agua que entra a los embalses: GloFAS (Copernicus Emergency Management Service) por la API de crecidas de Open-Meteo, con la red de drenaje de GloFAS v4 del JRC (CC BY 4.0).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');
     loading(resBox, 'Cargando embalses…');
-    const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => renderReservoirs(resBox, d, sh)).catch((e) => errorBox(resBox, e, () => this.render(el)));
+    const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => { renderReservoirs(resBox, d, sh); focusReservoir(el); }).catch((e) => errorBox(resBox, e, () => this.render(el)));
     const rain = renderRain(rainBox).catch((e) => errorBox(rainBox, e, () => renderRain(rainBox)));
     const gBox = el.querySelector('#rvGauges');
     // Sin datos de pluviómetros (aún no publicados) la sección simplemente no aparece

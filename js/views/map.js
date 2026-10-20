@@ -1101,7 +1101,7 @@ function showReservoirs() {
       const L = live.get(i);
       // Con dato en tiempo real (SAIH) se usa el porcentaje de ahora; si no, el del boletín semanal
       const pct = L ? L.pct : rv.pc(r[3], r[2]);
-      return { r, live: L, name: rv.nice(r[0]), lat: r[8], lon: r[9], cap: r[2], pct, color: rv.fillColor(pct), basin: d.basins[r[1]].name };
+      return { r, i, live: L, name: rv.nice(r[0]), lat: r[8], lon: r[9], cap: r[2], pct, color: rv.fillColor(pct), basin: d.basins[r[1]].name };
     }));
   }).catch(() => toast('No se pudieron cargar los embalses'));
 }
@@ -1144,7 +1144,7 @@ function openReservoir(x) {
     <div class="rv-sub"><span>${rv.hm3(cur)} de ${rv.hm3(cap)}</span>${rv.delta(f.isNum(prev) ? cur - prev : null)}</div>
     ${x.live ? rv.liveLine(x.live) : ''}
     <div class="rv-pop-meta">${f.esc(x.basin)}${f.isNum(year) ? ` · hace un año ${Math.round(rv.pc(year, cap))} %` : ''}${x.live ? ' · barra: boletín semanal' : ''}</div>
-    <a href="#/embalses">Ver todos los embalses ›</a></div>`;
+    <a href="#/embalses?e=${x.i}">Ver ficha y previsión ›</a></div>`;
   L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([x.lat, x.lon]).setContent(html).openOn(S.map);
 }

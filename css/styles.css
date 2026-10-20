@@ -723,6 +723,9 @@ select.xsel-native { display: none !important; }
 .rv-fc-chart { margin: 2px 0 10px; }
 .rv-fc-chart .rv-spark { height: 64px; margin: 0; }
 .rv-fc-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); position: relative; }
+.rv-res { scroll-margin-top: 76px; }
+.rv-res.rv-flash { animation: rvFlash 1.6s ease-out; }
+@keyframes rvFlash { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } }
 .rv-fc-today { position: absolute; top: 0; transform: translateX(-50%); }
 .rv-fc-cap { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 

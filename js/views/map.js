@@ -9,6 +9,7 @@ import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from 
 import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
 import * as rv from './reservoirs.js';
+import * as rivers from '../rivers.js';
 import { getForecast } from '../data.js';
 import { wxIcon } from '../icons.js';
 import * as own from '../owndata.js';
@@ -112,7 +113,7 @@ const ISO_MODES = [['off', 'Sin isolíneas'], ['pressure', 'Isobaras'], ['temp',
 
 const S = {
   map: null, field: null, base: null, labels: null, marker: null,
-  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), reservoirs: load('map.reservoirs', false), gauges: load('map.gauges', false), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
+  layer: load('map.layer', 'wind'), level: 'surface', borders: load('map.borders', true), cities: load('map.cities', true), particles: true, relief: load('map.relief', true), water: load('map.water', true), reservoirs: load('map.reservoirs', false), gauges: load('map.gauges', false), rivers: load('map.rivers', false), iso: load('map.iso', 'off'), values: load('map.values', false), sat: 'ir',
   grid: null, spec: null, loading: 0, token: 0,
   t: 0, t0: 0, playing: null, pick: null,
   radar: { frames: [], layers: [], idx: 0 },
@@ -1122,6 +1123,35 @@ function showGauges() {
   draw();
   S.gaugeTimer = setInterval(draw, 30 * 60e3); // se rehacen cada hora en el servidor
 }
+// Ríos: caudal medido en las estaciones de aforo, del color de su nivel de aviso (los que están en aviso, encima)
+function showRivers() {
+  clearInterval(S.riverTimer);
+  if (!S.rivers) { S.field.setRivers(null); S.map.closePopup(); return; }
+  const draw = () => rivers.getRivers().then((list) => {
+    if (!S.rivers) return;
+    if (!list.length) throw new Error('sin datos');
+    const val = (r) => (f.isNum(r.q) ? r.q : -1);
+    S.field.setRivers(list.filter((r) => f.isNum(r.q) || f.isNum(r.n))
+      .sort((a, b) => (b.lvl || 0) - (a.lvl || 0) || val(b) - val(a)).map((r) => {
+        const st = rivers.lvlStyle(r), tr = rivers.trend(r);
+        return { r, lat: r.lat, lon: r.lon, zero: f.isNum(r.q) && r.q < 0.05 && !(r.lvl > 0), text: `${rivers.mainText(r).replace(' m³/s', '')}${tr ? ' ' + rivers.trendIcon(tr) : ''}`, bg: st.bg, fg: st.fg };
+      }));
+  }).catch(() => { S.field.setRivers(null); toast('Todavía no hay datos de ríos'); S.rivers = false; save('map.rivers', false); buildMenu(); });
+  draw();
+  S.riverTimer = setInterval(draw, 30 * 60e3);
+}
+function openRiver(g) {
+  const r = g.r, tr = rivers.trend(r), st = rivers.lvlStyle(r);
+  const html = `<div class="rv-pop-in">
+    <div class="rv-top"><b>${f.esc(rivers.stationTitle(r))}</b><span class="pv-chip" style="background:${st.bg};color:${st.fg}">${f.isNum(r.lvl) ? rivers.LVL[r.lvl].name : 'Sin umbrales'}</span></div>
+    <div class="pv-pop-grid"><span>Caudal</span><b>${rivers.qText(r.q)}</b><span>Nivel</span><b>${rivers.nText(r.n)}</b><span>Tendencia</span><b>${rivers.trendIcon(tr)} ${rivers.trendText(tr)}</b></div>
+    ${rivers.spark24(r)}
+    ${r.thr ? `<div class="rv-pop-meta">Umbrales: ${rivers.thrText(r)}</div>` : ''}
+    <div class="rv-pop-meta">${f.esc(r.src)} · ${rivers.riverTime(r)}</div>
+    <a href="#/embalses?r=${encodeURIComponent(r.id)}">Ver previsión de caudal ›</a></div>`;
+  L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+    .setLatLng([r.lat, r.lon]).setContent(html).openOn(S.map);
+}
 function openGauge(g) {
   const r = g.r;
   const row = (label, v) => `<span>${label}</span><b>${f.isNum(v) ? f.precip(v, true) : '–'}</b>`;
@@ -1213,6 +1243,7 @@ function buildMenu() {
     ${tog('water', 'Lagos y embalses', S.water)}
     ${tog('reservoirs', 'Embalses: % de llenado', S.reservoirs)}
     ${tog('gauges', 'Pluviómetros: lluvia medida', S.gauges)}
+    ${tog('rivers', 'Ríos: caudal medido (m³/s)', S.rivers)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>
@@ -1240,6 +1271,7 @@ function buildMenu() {
     if (name === 'water') { S.water = checked; save('map.water', checked); showWater(); }
     if (name === 'reservoirs') { S.reservoirs = checked; save('map.reservoirs', checked); showReservoirs(); }
     if (name === 'gauges') { S.gauges = checked; save('map.gauges', checked); showGauges(); }
+    if (name === 'rivers') { S.rivers = checked; save('map.rivers', checked); showRivers(); }
     if (name === 'cities') {
       S.cities = checked;
       save('map.cities', checked);
@@ -1448,6 +1480,7 @@ export default {
       updatePlaces();
       showReservoirs();
       showGauges();
+      showRivers();
       on('favorites', updatePlaces);
       // El punto se puede arrastrar: el valor de la burbuja cambia mientras se mueve
       S.marker = L.marker([state.place.lat, state.place.lon], { draggable: true, autoPan: true, icon: L.divIcon({ className: '', html: '<div class="pin"></div><div class="pin-val hidden"></div>', iconSize: [16, 16] }) }).addTo(map);
@@ -1469,6 +1502,8 @@ export default {
         if (res) { openReservoir(res); return; }
         const gau = S.gauges ? S.field.gaugeAt(e.containerPoint) : null;
         if (gau) { openGauge(gau); return; }
+        const riv = S.rivers ? S.field.riverAt(e.containerPoint) : null;
+        if (riv) { openRiver(riv); return; }
         const hit = S.cities ? S.field.labelAt(e.containerPoint) : null;
         if (hit) { prefetchPlace(hit); clickTimer = setTimeout(() => openPlace(hit), 280); return; }
         showPick(e.latlng);
@@ -1476,7 +1511,7 @@ export default {
       });
       // Manita sobre los nombres, para que se vea que se pueden tocar
       map.on('mousemove', (e) => {
-        map.getContainer().style.cursor = (S.cities && S.field.labelAt(e.containerPoint)) || (S.reservoirs && S.field.reservoirAt(e.containerPoint)) || (S.gauges && S.field.gaugeAt(e.containerPoint)) ? 'pointer' : '';
+        map.getContainer().style.cursor = (S.cities && S.field.labelAt(e.containerPoint)) || (S.reservoirs && S.field.reservoirAt(e.containerPoint)) || (S.gauges && S.field.gaugeAt(e.containerPoint)) || (S.rivers && S.field.riverAt(e.containerPoint)) ? 'pointer' : '';
       });
       map.on('dblclick', () => clearTimeout(clickTimer));
       // Punto de mira del móvil

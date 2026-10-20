@@ -734,6 +734,211 @@ def enrich(reservoirs):
     return out
 
 
+# ---------- Ríos: caudal y nivel de las estaciones de aforo ----------
+# Cada red da el último dato; el nivel de aviso sale de sus propios umbrales cuando los publica
+# (0 normal, 1 seguimiento o aviso, 2 prealerta, 3 alerta). Sin fuente accesible: Tajo, Ebro, Segura y Miño-Sil.
+def river(id_, name, river_, lat, lon, q, n, t, src, thr=None, thv=None, lvl=None):
+    q = round(q, 2) if isinstance(q, (int, float)) and q >= 0 else None
+    n = round(n, 2) if isinstance(n, (int, float)) else None
+    thr = [float(x) for x in thr if x not in (None, '')] if thr else None
+    if lvl is None and thr:
+        v = q if thv == 'q' else n
+        lvl = sum(1 for x in thr if v is not None and x > 0 and v >= x) if v is not None else None
+    return {'id': id_, 'name': name.strip(), 'river': (river_ or '').strip() or None, 'lat': round(lat, 5), 'lon': round(lon, 5),
+            'q': q, 'n': n, 't': t, 'src': src, 'thr': thr or None, 'thv': thv if thr else None, 'lvl': lvl}
+
+
+def river_name(s):
+    """'río Zújar' / 'R. Hozgarganta' / 'RIO GENIL' -> 'Zújar' / 'Hozgarganta' / 'Genil'."""
+    s = re.sub(r'^\s*(r[ií]o|r\.|riu|riera|arroyo|rambla|barranco)\s+', '', s or '', flags=re.I).strip()
+    return s.title() if s.isupper() else s
+
+
+def duero_page():
+    if not hasattr(duero_page, 'p'):
+        duero_page.p = http('https://www.saihduero.es/datos-tiempo-real/risr', timeout=90)
+    return duero_page.p
+
+
+def rivers_duero():
+    out = []
+    for o in js_objects(duero_page(), 'datosEA'):
+        if not o.get('lat'):
+            continue
+        st = ' '.join((o.get('q_status') or '', o.get('n_status') or '', o.get('status') or '')).lower()
+        lvl = 3 if 'alerta' in st and 'pre' not in st else 2 if 'prealerta' in st else 1 if 'seguimiento' in st or 'aviso' in st else 0
+        q = num(o.get('q')) if 'sin_dato' not in (o.get('q_status') or '') else None
+        n = num(o.get('n')) if 'sin_dato' not in (o.get('n_status') or '') else None
+        if q is None and n is None:
+            continue
+        out.append(river(f'D-{o["id"]}', re.sub(r',\s*\d+$', '', o['station']), o.get('river'), float(o['lat']), float(o['lng']),
+                         q, n, iso(duero_time(o['date'], o['time'])), 'SAIH Duero', lvl=lvl))
+    return out
+
+
+def rivers_jucar():
+    st = {}
+    for o in json_objects(http('https://saih.chj.es/mapa-aforos', timeout=90), 'fldTCodigo'):
+        v, x, y = o.get('lastValue'), o.get('fldNCoordGPSLat'), o.get('fldNCoordGPSLon')
+        if not isinstance(v, (int, float)) or not x or not o.get('fldDFechaComunicacion'):
+            continue
+        var = (o.get('fldTNombreVariable') or '').upper()
+        s = st.setdefault(o['fldTCodigo'], {'o': o, 'q': None, 'n': None})
+        rv = re.search(r'R[IÍ]O\s+([A-ZÁÉÍÓÚÑÜ\' -]+?)(?:\s+(?:EN|SOBRE|AGUAS|A LA|AL)\b|$)', var)
+        s['river'] = s.get('river') or (rv[1].title() if rv else o.get('fldTSubCuenca'))
+        if 'CAUDAL' in var and s['q'] is None:
+            s['q'], s['oq'] = v, o
+        elif 'NIVEL' in var and s['n'] is None:
+            s['n'] = v
+    out = []
+    for code, s in st.items():
+        o = s.get('oq') or s['o']
+        lat, lon = utm_to_latlon(float(o['fldNCoordGPSLat']), float(o['fldNCoordGPSLon']), 30)
+        t = datetime.strptime(o['fldDFechaComunicacion'][:16], '%Y-%m-%dT%H:%M').replace(tzinfo=timezone.utc)
+        thr = [o.get('fldFUmbralBajo'), o.get('fldFUmbralMedio'), o.get('fldFUmbralAlto')] if s['q'] is not None else None
+        out.append(river(f'J-{code}', o['fldTNombre'].title(), s.get('river'), lat, lon, s['q'], s['n'], iso(t), 'SAIH Júcar', thr, 'q'))
+    return out
+
+
+def rivers_aca():
+    cat = [s for p in json.loads(http(ACA + 'catalog?componentType=aforament', timeout=90))['providers'] for s in p['sensors']]
+    data = {s['sensor']: s.get('observations') or [] for s in json.loads(http(ACA + 'data/AFORAMENT-EST?limit=1', timeout=90))['sensors']}
+    comp = {}
+    for m in cat:
+        obs = data.get(m['sensor'])
+        desc = m['description'].lower()
+        if not obs or not m.get('location') or 'canal' in desc:
+            continue
+        v, t = num(obs[0]['value']), aca_time(obs[0]['timestamp'])
+        if v is None or NOW - t > timedelta(hours=12):
+            continue
+        c = comp.setdefault(m['component'], {'m': m, 't': t})
+        if desc.startswith('cabal') and c.get('q') is None:
+            c['q'] = v * (0.001 if m.get('unit') == 'l/s' else 1)
+        elif desc.startswith('nivell'):
+            c['n'] = v / 100 if m.get('unit') == 'cm' else v
+    out = []
+    for k, c in comp.items():
+        m = c['m']
+        lat, lon = map(float, m['location'].split())
+        desc = m.get('componentDesc') or k
+        name = re.sub(r'\s*\(.*\)$', '', desc)
+        rv = (m.get('componentAdditionalInfo') or {}).get('Riu') or (re.search(r'\(([^)]+)\)', desc) or [None, ''])[1]
+        out.append(river(f'A-{k}', name, river_name(rv),
+                         lat, lon, c.get('q'), c.get('n'), iso(c['t']), 'ACA'))
+    return out
+
+
+def rivers_cantabrico():
+    st = {}
+    for tipo in ('caudal', 'nivel'):
+        for f in chc_layer(tipo):
+            p = f['properties']
+            if p.get('fuera_servicio') or p.get('lat') is None or p.get(tipo) is None:
+                continue
+            s = st.setdefault(p['codigo'], {'p': p})
+            s[tipo] = p[tipo]
+            s['thr_' + tipo] = [p.get('seguimiento'), p.get('prealerta'), p.get('alerta')]
+    out = []
+    for code, s in st.items():
+        p = s['p']
+        # Los umbrales del caudal son los oficiales de aviso; si solo hay nivel, los del nivel
+        thv = 'q' if s.get('caudal') is not None and any(s.get('thr_caudal') or []) else 'n'
+        out.append(river(f'C-{code}', p['nombre'], river_name(p.get('rio')), p['lat'], p['lon'], s.get('caudal'), s.get('nivel'),
+                         chc_time(p.get('fecha')), 'SAI Cantábrico', s.get('thr_caudal' if thv == 'q' else 'thr_nivel'), thv))
+    return out
+
+
+def rivers_guadiana():
+    tok = json.loads(http(f'{GUAD}/security/getProfile', {'COD_USUARIO': 'public', 'ORIGIN': 'db', 'APP': 'VISOR', 'CASTICKET': None}))['sesionId']
+    auth = {'AUTHJWT': tok}
+    meta = {s['cod_estacion']: s for s in json.loads(http(f'{GUAD}/Visor/estaciones', headers=auth))['estaciones']}
+    vals = json.loads(http(f'{GUAD}/Visor/resourceByID', {'id': 'CR', 'type': 'ficha_redes_control'}, auth))['ult_res']['valores']
+    out = []
+    for r in vals:
+        m = meta.get(r['cod_estacion'])
+        if not m or m.get('latitud') is None or not r.get('timestamp'):
+            continue
+        q, n = r.get('QR1'), r.get('NR1')
+        if not isinstance(q, (int, float)) and not isinstance(n, (int, float)):
+            continue
+        t = datetime.strptime(r['timestamp'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+        if NOW - t > timedelta(days=2):
+            continue
+        thr = [num(r.get('ah1')), num(r.get('ah2')), num(r.get('ah3'))]
+        out.append(river(f'G-{r["cod_estacion"]}', r['nombre'], river_name(m.get('rio')), m['latitud'], m['longitud'], q, n, iso(t),
+                         'SIRA Guadiana', thr if all(thr) else None, 'n'))
+    return out
+
+
+def rivers_hidrosur():
+    pts = {}
+    for f in json.loads(http(HS + 'assets/visorSAIH/capas/Aforos.json', timeout=60))['features']:
+        pr = f['properties']
+        if pr.get('COD_') is not None and pr.get('Latitud'):
+            pts[str(pr['COD_'])] = pr
+    upd = re.search(r'(\d\d-\d\d-\d{4} \d\d:\d\d:\d\d)', http(HS, timeout=60))
+    t = iso(local_to_utc(datetime.strptime(upd[1], '%d-%m-%Y %H:%M:%S')) if upd else NOW)
+    out = []
+    for c in rows(http(HS + 'resumen/rios', timeout=60)):
+        pr = pts.get(c[0]) if len(c) >= 4 and c[0].isdigit() else None
+        if not pr:
+            continue
+        q, n = num(c[3]), num(c[2])
+        if q is None and n is None:
+            continue  # «n/d» mientras no hay dato de la última hora
+        name = re.sub(r'\s*\([A-Z]{2}\)$', '', c[1])
+        m = re.match(r'^(?:R[IÍ]O\s+)?(.*?)\s*\((.+)\)$', name, re.I)
+        out.append(river(f'H-{c[0]}', (m[2] if m else name).title(), river_name(pr.get('Río')) or (m[1].title() if m else None),
+                         pr['Latitud'], pr['Longitud'], q, n, t, 'Hidrosur',
+                         [pr.get('Aviso'), pr.get('Prealerta'), pr.get('Alerta')], 'n'))
+    return out
+
+
+def rivers_guadalquivir():
+    page = http(GQ + 'CaudalesMapa.aspx', timeout=90)
+    upd = re.search(r'Actualizados:\s*(\d\d/\d\d/\d{4} \d\d:\d\d)', page)
+    t = iso(local_to_utc(datetime.strptime(upd[1], '%d/%m/%Y %H:%M')) if upd else NOW)
+    out = []
+    parts = re.split(r'<div id="ContentPlaceHolder1_(\w+?)_\w+"[^>]*\sx="(\d+)" y="(\d+)">', page)
+    for i in range(1, len(parts) - 3, 4):
+        code, x, y, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
+        cap = re.search(r'<caption[^>]*>\s*(.*?)\s*</caption>', body, re.S)
+        q = re.search(r'>Caudal</span></td><td[^>]*><span[^>]*>([\d.,]+)\s*m', body)
+        if not cap or not q:
+            continue
+        lat, lon = utm_to_latlon(float(x), float(y), 30)
+        out.append(river(f'Q-{code}', htmlmod.unescape(cap[1]), 'Guadalquivir', lat, lon, num(q[1]), None, t, 'SAIH Guadalquivir'))
+    return out
+
+
+RIVER_SOURCES = [
+    ('SAIH Duero', rivers_duero),
+    ('SAIH Júcar', rivers_jucar),
+    ('ACA', rivers_aca),
+    ('SAI Cantábrico', rivers_cantabrico),
+    ('SIRA Guadiana', rivers_guadiana),
+    ('Hidrosur', rivers_hidrosur),
+    ('SAIH Guadalquivir', rivers_guadalquivir),
+]
+
+
+def river_history(state, rivers):
+    """Últimas 24 h de cada estación, hora a hora (caudal o, si no lo da, nivel), para la gráfica y la tendencia."""
+    hist = state.setdefault('rivh', {})
+    end = NOW.replace(minute=0, second=0, microsecond=0)
+    hours = [(end - timedelta(hours=k)).strftime('%Y-%m-%dT%H') for k in range(23, -1, -1)]
+    for r in rivers:
+        v = r['q'] if r['q'] is not None else r['n']
+        h = {k: x for k, x in hist.get(r['id'], {}).items() if k in hours}
+        if v is not None and r['t'][:13] in hours:
+            h[r['t'][:13]] = v
+        hist[r['id']] = h
+        r['h'] = [h.get(k) for k in hours]
+    for k in [k for k in hist if not hist[k]]:
+        del hist[k]
+
+
 SOURCES = [
     ('SAIH Tajo', lambda s, c: fetch_tajo(s)),
     ('SIRA Guadiana', lambda s, c: fetch_guadiana(s)),
@@ -791,6 +996,22 @@ def main(state_path, out_path, *only):
         gauges += g
         reservoirs += r
     week_change(state, reservoirs)
+    rivers = []
+    rlast = state.setdefault('rlast', {})
+    for name, fn in RIVER_SOURCES:
+        if only and name not in only:
+            rv = rlast.get(name, [])
+        else:
+            t0 = time.time()
+            try:
+                rv = fn()
+                rlast[name] = rv
+                print(f'{name}: {len(rv)} estaciones de aforo ({time.time() - t0:.0f} s)')
+            except Exception as e:  # noqa: BLE001
+                rv = rlast.get(name, [])
+                print(f'{name} (ríos) no disponible ({e}); se conserva lo anterior: {len(rv)}')
+        rivers += rv
+    river_history(state, rivers)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     COORDS.write_text(json.dumps(dict(sorted(coords.items())), ensure_ascii=False, indent=0), encoding='utf-8')
@@ -802,6 +1023,9 @@ def main(state_path, out_path, *only):
         # [id, nombre, lat, lon, altitud, lluvia 1 h, 6 h, 12 h, 24 h (mm), hora del dato (UTC), fuente]
         'gauges': [[g['id'], g['name'], round(g['lat'], 4), round(g['lon'], 4), g['alt'], *g['p'], g['t'], g['src']] for g in gauges],
         'reservoirs': reservoirs,
+        # Estaciones de aforo: caudal q (m³/s), nivel n (m), umbrales thr del caudal o del nivel (thv), nivel de aviso lvl
+        # y h = últimas 24 h hora a hora
+        'rivers': rivers,
         # El SAIH Ebro no responde desde GitHub (bloquea sus servidores) pero sí desde un móvil en España y
         # permite CORS: la app lo pide directamente y necesita las coordenadas de sus pluviómetros
         'coords': {'ebro': {k.split(':', 1)[1]: v for k, v in coords.items() if k.startswith('ebro:') and v}},

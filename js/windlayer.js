@@ -336,7 +336,10 @@ export class FieldLayer {
     // Embalses: primero los puntos (los nombres de ciudades los esquivan) y al final su porcentaje donde quepa
     const res = this.reservoirs?.length ? this._reservoirDots(ctx) : null;
     this.gaugeHits = [];
-    if (this.gauges?.length) this._gauges(ctx);
+    this.riverHits = [];
+    this.pillBoxes = []; // ríos y pluviómetros no se pisan entre sí
+    if (this.rivers?.length) this._gauges(ctx, this.rivers, this.riverHits);
+    if (this.gauges?.length) this._gauges(ctx, this.gauges, this.gaugeHits);
     if (this.style.cities && this.cities) this._cityLabels(ctx);
     if (res) this._reservoirLabels(ctx, res);
     if (isoLabels) this._isoLabels(ctx, isoLabels);
@@ -435,15 +438,17 @@ export class FieldLayer {
   // ---------- Pluviómetros: etiqueta con los mm medidos (los que más han recogido, primero) ----------
   // gauges: [{ lat, lon, val, text, bg, fg, ... }] ordenados de más a menos lluvia (o null para quitarlos)
   setGauges(list) { this.gauges = list; this._queue({ iso: true }); }
+  // Ríos (estaciones de aforo): las mismas etiquetas, con el caudal y el color de su nivel de aviso
+  setRivers(list) { this.rivers = list; this._queue({ iso: true }); }
 
-  _gauges(ctx) {
+  _gauges(ctx, list, hits) {
     const geo = this.geo;
-    const placed = [];
+    const placed = this.pillBoxes;
     ctx.save();
     ctx.font = '700 11px Roboto, "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const g of this.gauges) {
+    for (const g of list) {
       const [x, y] = this._toCanvas(g.lat, g.lon);
       if (x < 4 || y < 4 || x > geo.w - 4 || y > geo.h - 4) continue;
       // Pluviómetro seco: punto pequeño sin número (se ve la red y al tocarlo salen sus 0 mm)
@@ -456,7 +461,8 @@ export class FieldLayer {
         ctx.lineWidth = 0.8;
         ctx.strokeStyle = 'rgba(0,0,0,0.45)';
         ctx.stroke();
-        this.gaugeHits.push({ g, x: x - geo.ox, y: y - geo.oy, w: 8, h: 8 });
+        hits.push({ g, x: x - geo.ox, y: y - geo.oy, w: 8, h: 8 });
+        placed.push([x - 4, y - 4, 8, 8]);
         continue;
       }
       const w = ctx.measureText(g.text).width + 10, h = 17;
@@ -479,18 +485,20 @@ export class FieldLayer {
       ctx.fillStyle = g.fg;
       ctx.fillText(g.text, x, y + 0.5);
       this.dotBoxes.push([bx, by, w, h]);
-      this.gaugeHits.push({ g, x: x - geo.ox, y: y - geo.oy, w, h });
+      hits.push({ g, x: x - geo.ox, y: y - geo.oy, w, h });
     }
     ctx.restore();
   }
-  gaugeAt(pt) {
-    for (const h of this.gaugeHits || []) {
+  gaugeAt(pt, hits = this.gaugeHits) {
+    for (const h of hits || []) {
       // Las coordenadas guardadas son del contenedor en el momento de dibujar: se recalculan por si el mapa se movió
       const p = this.map.latLngToContainerPoint([h.g.lat, h.g.lon]);
       if (Math.abs(pt.x - p.x) <= h.w / 2 + 4 && Math.abs(pt.y - p.y) <= h.h / 2 + 4) return h.g;
     }
     return null;
   }
+
+  riverAt(pt) { return this.gaugeAt(pt, this.riverHits); }
 
   // Embalse bajo un punto de la pantalla (coordenadas del contenedor del mapa)
   reservoirAt(pt) {

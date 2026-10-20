@@ -9,6 +9,7 @@ import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
 import { reservoirForecast, inflowForecast } from '../resforecast.js';
 import { normals } from '../normals.js';
+import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle } from '../rivers.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
@@ -485,6 +486,56 @@ async function renderRain(box) {
   }
 }
 
+// ---------- Ríos: estaciones de aforo cerca del lugar y las que están en aviso ----------
+function renderRivers(box, sh, focusId) {
+  const all = sh?.rivers || [];
+  if (!all.length) { box.innerHTML = ''; return; }
+  const here = state.place;
+  const focus = focusId ? all.find((r) => r.id === focusId) : null;
+  const near = all.filter((r) => r !== focus).map((r) => [r, distKm(here.lat, here.lon, r.lat, r.lon)])
+    .sort((a, b) => a[1] - b[1]).slice(0, 6).filter(([, km]) => km < 60);
+  const warn = all.filter((r) => r.lvl >= 1).sort((a, b) => b.lvl - a.lvl);
+  box.innerHTML = `<div class="section-title">Ríos</div>
+    ${focus ? `<div class="card rv-list">${riverRow(focus, distKm(here.lat, here.lon, focus.lat, focus.lon))}</div>` : ''}
+    ${warn.length ? `<div class="card"><div class="card-head"><h2>Ríos en aviso</h2><span class="tiny">${warn.length} ${warn.length === 1 ? 'estación' : 'estaciones'}</span></div>
+      <div class="pv-top">${warn.slice(0, 10).map((r) => `<a class="pv-row" href="#/embalses?r=${encodeURIComponent(r.id)}"><span class="pv-name">${f.esc(stationTitle(r))}</span>
+        <span class="pv-chip" style="background:${lvlStyle(r).bg};color:${lvlStyle(r).fg}">${LVL[r.lvl].name} · ${mainText(r)}</span></a>`).join('')}</div></div>` : ''}
+    ${near.length ? `<div class="card rv-list"><div class="card-head"><h2>Cerca de ${f.esc(here.name)}</h2><span class="tiny">caudal medido ahora</span></div>
+      ${near.map(([r, km]) => riverRow(r, km)).join('')}</div>`
+      : `<p class="note">No hay estaciones de aforo con datos públicos a menos de 60 km. ${warn.length ? '' : 'Ningún río de las redes con umbrales está en aviso ahora.'}</p>`}
+    <p class="note rv-livenote">${all.length} estaciones de aforo en tiempo real (SAIH Duero, Júcar y Guadalquivir, SIRA Guadiana, SAI Cantábrico, ACA e Hidrosur). Los avisos usan los umbrales de cada confederación. Tajo, Ebro, Segura y Miño-Sil no publican el caudal de forma accesible.</p>`;
+  box.querySelectorAll('details.rv-river').forEach((el) => el.addEventListener('toggle', () => {
+    const fc = el.querySelector('.rv-fc');
+    const r = all.find((x) => x.id === el.dataset.r);
+    if (el.open && fc && r && !fc.dataset.done) { fc.dataset.done = 1; renderRiverForecast(fc, r); }
+  }));
+}
+
+// #/embalses?r=estación (desde el mapa): se abre su ficha arriba de la sección de ríos
+function focusRiver(el, sh) {
+  const id = new URLSearchParams(location.hash.split('?')[1] || '').get('r');
+  const box = el.querySelector('#rvRivers');
+  if (!id || !box) return;
+  if (box.dataset.focus !== id) { box.dataset.focus = id; renderRivers(box, sh, id); }
+  const row = box.querySelector(`details.rv-river[data-r="${CSS.escape(id)}"]`);
+  if (!row) return;
+  row.open = true;
+  pinScroll(el, row);
+}
+
+// Mantiene un elemento arriba mientras termina de cargar lo de encima (cambia de altura), hasta 3 s o hasta que el
+// usuario toque o desplace la página
+function pinScroll(el, target) {
+  const go = () => target.scrollIntoView({ block: 'start' });
+  const ro = new ResizeObserver(go);
+  const stop = () => { ro.disconnect(); ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => removeEventListener(t, stop)); };
+  ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => addEventListener(t, stop, { passive: true }));
+  setTimeout(() => { go(); ro.observe(el); }, 60);
+  setTimeout(stop, 3000);
+  target.classList.add('rv-flash');
+  setTimeout(() => target.classList.remove('rv-flash'), 1600);
+}
+
 // #/embalses?e=índice (desde el mapa): se abre ese embalse en su cuenca, con su ficha y su previsión
 function focusReservoir(el) {
   const i = new URLSearchParams(location.hash.split('?')[1] || '').get('e');
@@ -492,31 +543,28 @@ function focusReservoir(el) {
   if (!res) return;
   res.closest('details.rv-basin').open = true;
   res.open = true;
-  // Se mantiene arriba mientras termina de cargar lo de encima (cambia de altura), hasta 3 s o hasta que el usuario
-  // toque o desplace la página
-  const go = () => res.scrollIntoView({ block: 'start' });
-  const ro = new ResizeObserver(go);
-  const stop = () => { ro.disconnect(); ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => removeEventListener(t, stop)); };
-  ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((t) => addEventListener(t, stop, { passive: true }));
-  setTimeout(() => { go(); ro.observe(el); }, 60);
-  setTimeout(stop, 3000);
-  res.classList.add('rv-flash');
-  setTimeout(() => res.classList.remove('rv-flash'), 1600);
+  pinScroll(el, res);
 }
 
 export default {
-  show(el) { focusReservoir(el); },
+  show(el) { focusReservoir(el); getSaih().then((sh) => focusRiver(el, sh)).catch(() => {}); },
   async render(el) {
-    el.innerHTML = `<div id="rvRes"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
+    el.innerHTML = `<div id="rvRes"></div><div id="rvRivers"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
       Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar, Miño-Sil y Segura (Confederación Hidrográfica del Segura), SAI del Cantábrico (CH Cantábrico), ACA, Hidrosur y MeteoGalicia.
       Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData y las redes anteriores.
       Lluvia del año: Open-Meteo y ERA5 (Copernicus).
+      Ríos: estaciones de aforo de las mismas redes; previsión de caudal con GloFAS.
       Agua que entra a los embalses: GloFAS (Copernicus Emergency Management Service) por la API de crecidas de Open-Meteo, con la red de drenaje de GloFAS v4 del JRC (CC BY 4.0).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');
     loading(resBox, 'Cargando embalses…');
-    const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => { renderReservoirs(resBox, d, sh); focusReservoir(el); }).catch((e) => errorBox(resBox, e, () => this.render(el)));
+    const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => {
+      renderReservoirs(resBox, d, sh);
+      renderRivers(el.querySelector('#rvRivers'), sh);
+      focusReservoir(el);
+      focusRiver(el, sh);
+    }).catch((e) => errorBox(resBox, e, () => this.render(el)));
     const rain = renderRain(rainBox).catch((e) => errorBox(rainBox, e, () => renderRain(rainBox)));
     const gBox = el.querySelector('#rvGauges');
     // Sin datos de pluviómetros (aún no publicados) la sección simplemente no aparece

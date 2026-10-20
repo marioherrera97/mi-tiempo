@@ -720,6 +720,11 @@ select.xsel-native { display: none !important; }
 .rv-fc-main { font-size: 18px; font-weight: 650; margin: 4px 0 8px; }
 .rv-fc-main .muted { font-size: 13px; font-weight: 400; }
 .rv-fc .note { margin: 8px 0 0; }
+.rv-fc-chart { margin: 2px 0 10px; }
+.rv-fc-chart .rv-spark { height: 64px; margin: 0; }
+.rv-fc-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); position: relative; }
+.rv-fc-today { position: absolute; top: 0; transform: translateX(-50%); }
+.rv-fc-cap { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 
 /* ===== Mapa 3D ===== */
 .view-relief.active {

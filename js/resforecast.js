@@ -1,4 +1,15 @@
-// Previsión de cuánto subirá un embalse con la lluvia. Es una heurística explicada, no un modelo hidrológico:
+// Previsión del volumen de un embalse a 7 días.
+//
+// Método principal (inflowForecast): agua que traen los ríos según GloFAS (Copernicus), con la API de crecidas de
+// Open-Meteo, en las celdas por donde le entran los ríos a cada embalse (vendor/entradas.json, pipeline/entradas.py).
+// Lo que cambia un embalse lo decide sobre todo cuánto sueltan, y eso no se publica de antemano, así que:
+//   cambio de cada día = ritmo actual del embalse + k · (entrada de ese día − entrada reciente)
+// El ritmo actual sale del dato en tiempo real (SAIH) o del último boletín; k es la parte de un aumento de entrada que
+// suele quedarse en el embalse (el resto lo sueltan), ajustada con el último año. Se comprueba semana a semana contra
+// el boletín (validación cruzada) y se compara con «cambiará igual que la semana pasada» para dar la fiabilidad.
+//
+// Método de respaldo (reservoirForecast), si no hay entradas o falla la API: respuesta del embalse a la lluvia local.
+// Es una heurística explicada, no un modelo hidrológico:
 // 1. Se mira cómo respondió el embalse a la lluvia el último año: cambio de volumen de cada semana del boletín frente a la
 //    lluvia de esa semana y de la anterior, de media en 5 puntos de su entorno (la presa y 4 puntos a 20 km), con ERA5.
 // 2. Se ajusta una recta: cambio semanal = base + b·lluvia de la semana + c·lluvia de la semana anterior (b y c ≥ 0).
@@ -105,4 +116,88 @@ export async function reservoirForecast(r, weeks) {
   let wi = 0;
   r0.forEach((v, n) => { if (v > r0[wi]) wi = n; });
   return { ...m, past7, next7, rainPart, change, after: cur + change, cap, cur, n: dv.length, wetWeek: { rain: r0[wi], dv: dv[wi] } };
+}
+
+// ---------- Entradas por los ríos (GloFAS) ----------
+let entradas = null;
+const getEntradas = () => (entradas ||= fetch('vendor/entradas.json').then((r) => (r.ok ? r.json() : {})).catch(() => { entradas = null; return {}; }));
+
+// r = fila del boletín; weeks = fechas del boletín; live = dato en tiempo real del SAIH (opcional)
+// Devuelve null si el embalse no tiene entradas calculadas (se usa entonces el método de la lluvia)
+export async function inflowForecast(r, weeks, live) {
+  const E = (await getEntradas())[r[0]];
+  if (!E) return null;
+  const [, fac, cells] = E;
+  const [, , cap, cur, , , , , , , series] = r;
+  const wk = weeks.slice(-series.length);
+  const today = f.todayISO();
+  const url = `https://flood-api.open-meteo.com/v1/flood?latitude=${cells.map((c) => c[0]).join(',')}&longitude=${cells.map((c) => c[1]).join(',')}`
+    + `&daily=river_discharge,river_discharge_p25,river_discharge_p75&start_date=${f.addDays(wk[0], -14)}&end_date=${f.addDays(today, 15)}`;
+  const resp = await getJSON(url, { ttl: 3 * 3600e3 });
+  const arr = Array.isArray(resp) ? resp : [resp];
+  // Caudal que entra cada día (m³/s, todos los ríos, con lo de arroyos y laderas) y en hm³/día
+  const days = arr[0].daily.time;
+  const sum = (k, i) => fac * arr.reduce((s, x) => s + (x.daily[k]?.[i] ?? x.daily.river_discharge[i] ?? 0), 0);
+  const Q = new Map(), Qlo = new Map(), Qhi = new Map();
+  days.forEach((t, i) => { Q.set(t, sum('river_discharge', i)); Qlo.set(t, sum('river_discharge_p25', i)); Qhi.set(t, sum('river_discharge_p75', i)); });
+  const HM3 = 86400 / 1e6;
+  const inHm3 = (from, to, M = Q) => { let s = 0; for (let d = f.addDays(from, 1); d <= to; d = f.addDays(d, 1)) s += (M.get(d) || 0) * HM3; return s; };
+
+  // Semanas del boletín: cambio de volumen y agua que entró esa semana
+  const rows = [];
+  for (let k = 1; k < wk.length; k++) {
+    if (f.isNum(series[k]) && f.isNum(series[k - 1])) rows.push({ dv: series[k] - series[k - 1], I: inHm3(wk[k - 1], wk[k]) });
+  }
+  if (rows.length < 20) throw new Error('Pocos datos para estimar');
+  const meanIn = rows.reduce((s, x) => s + x.I, 0) / rows.length;
+  // k por mínimos cuadrados (entre 0 y 1) y error de cada semana con k ajustado sin ella
+  const xs = rows.slice(1).map((x, i) => x.I - rows[i].I), ys = rows.slice(1).map((x, i) => x.dv - rows[i].dv);
+  const fitK = (skip) => {
+    let sxy = 0, sxx = 0;
+    xs.forEach((x, j) => { if (j !== skip) { sxy += x * ys[j]; sxx += x * x; } });
+    return sxx > 0 ? Math.min(1, Math.max(0, sxy / sxx)) : 0;
+  };
+  const kk = fitK(-1);
+  let eNew = 0, ePers = 0, eZero = 0;
+  xs.forEach((x, j) => {
+    const real = rows[j + 1].dv, last = rows[j].dv;
+    eNew += Math.abs(real - (last + fitK(j) * x)); ePers += Math.abs(real - last); eZero += Math.abs(real);
+  });
+  const n = xs.length;
+  const skill = { mae: eNew / n, pers: ePers / n, zero: eZero / n, weeks: n };
+
+  // Punto de partida: el dato en tiempo real si es posterior al boletín (con su capacidad: algunas redes usan otra curva).
+  // Ritmo actual: el cambio en 7 días del propio SAIH; si no lo hay, la última semana del boletín. Nunca se resta uno
+  // del otro: el boletín redondea a hm³ y algunas redes miden distinto, y la diferencia parecería un ritmo
+  const wkLast = wk[wk.length - 1];
+  const liveDay = live && f.isNum(live.vol) && live.t.slice(0, 10) >= wkLast ? live.t.slice(0, 10) : null;
+  let base = wkLast, V0 = cur, capV = cap, src = 'boletín', rateLive = false;
+  const last = rows[rows.length - 1];
+  let rate = last.dv / 7, inRate = last.I / 7;
+  if (liveDay) {
+    base = liveDay; V0 = live.vol; src = live.src;
+    if (live.pct > 0) capV = Math.max(live.vol, (live.vol / live.pct) * 100);
+    if (f.isNum(live.d7) && live.d7n > 0) {
+      rate = live.d7 / live.d7n; inRate = inHm3(f.addDays(liveDay, -live.d7n), liveDay) / live.d7n; rateLive = true;
+    }
+  }
+  // Se avanza día a día hasta dentro de 7 días; lo que no cabe se vierte y no se puede soltar más de lo que hay
+  const run = (M) => {
+    let V = V0, now = V0;
+    for (let d = f.addDays(base, 1); d <= f.addDays(today, 7); d = f.addDays(d, 1)) {
+      V = Math.min(capV, Math.max(0, V + rate + kk * ((M.get(d) ?? Q.get(d) ?? 0) * HM3 - inRate)));
+      if (d === today) now = V;
+    }
+    return { now: base >= today ? V0 : now, end: V };
+  };
+  const mid = run(Q), lo = run(Qlo), hi = run(Qhi);
+  const now = mid.now;
+  // Gráfico: caudal de entrada de las últimas 8 semanas y los próximos 15 días
+  const chart = days.filter((d) => d >= f.addDays(today, -56)).map((d) => ({ d, q: Q.get(d), lo: Qlo.get(d), hi: Qhi.get(d) }));
+  return {
+    cap: capV, cur, now, after: mid.end, change: mid.end - now, range: [lo.end - lo.now, hi.end - hi.now].sort((a, b) => a - b),
+    in7: inHm3(today, f.addDays(today, 7)), in7lo: inHm3(today, f.addDays(today, 7), Qlo), in7hi: inHm3(today, f.addDays(today, 7), Qhi),
+    inPast7: inHm3(f.addDays(today, -7), today), rate: rate * 7, k: kk, skill, src, base, wkLast, rateLive,
+    passThrough: meanIn > 2 * cap, meanIn, rivers: cells.length, chart, today,
+  };
 }

@@ -46,11 +46,32 @@ jobs:
           mdb=$(ls bd/*.mdb | head -1)
           if [ -s wd.json ]; then python pipeline/embalses.py "$mdb" vendor wd.json; else python pipeline/embalses.py "$mdb" vendor; fi
 
+      # Por qué celdas de GloFAS le entran los ríos a cada embalse (para la previsión con la API de crecidas)
+      - name: Red de drenaje de GloFAS (JRC, CC BY 4.0)
+        id: ldd
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/glofas
+          key: glofas-ldd-v4
+
+      - name: Descargar la red de drenaje
+        if: steps.ldd.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/glofas"
+          curl -sSfL --retry 4 --retry-delay 30 -o "${{ runner.temp }}/glofas/ldd.nc" \
+            https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/CEMS-GLOFAS/LISFLOOD_static_and_parameter_maps_for_GloFAS/v1.1.1_OS-LISFLOOD-v4.x/Catchments_morphology_and_river_network/ldd_repaired.nc
+
+      - name: Entradas de los embalses
+        continue-on-error: true
+        run: |
+          pip install -q h5py numpy
+          python pipeline/entradas.py "${{ runner.temp }}/glofas/ldd.nc" vendor
+
       - name: Guardar en el repositorio y publicar
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git add vendor/embalses.json pipeline/embalses_coords.json
+          git add vendor/embalses.json pipeline/embalses_coords.json vendor/entradas.json
           if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "Embalses: datos de la semana del $(python -c "import json; print(json.load(open('vendor/embalses.json'))['updated'])")"

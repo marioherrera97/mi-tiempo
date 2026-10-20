@@ -750,6 +750,25 @@ SOURCES = [
 ]
 
 
+def week_change(state, reservoirs):
+    """Cambio de volumen en unos 7 días medido por el mismo SAIH ('d7', con 'd7n' días). La previsión de la app lo usa
+    como ritmo del embalse: restarle el boletín semanal no vale (redondea a hm³ y algunas redes usan otra curva)."""
+    hist = state.setdefault('vols', {})
+    for r in reservoirs:
+        if r.get('vol') is None or not r.get('t'):
+            continue
+        day = r['t'][:10]
+        h = hist.setdefault(f"{r['src']}|{r['name']}", {})
+        h[day] = r['vol']
+        d0 = datetime.fromisoformat(day)
+        ago = {(d0 - datetime.fromisoformat(d)).days: v for d, v in h.items()}
+        best = min((n for n in ago if 6 <= n <= 8), key=lambda n: abs(n - 7), default=None)
+        if best is not None:
+            r['d7'], r['d7n'] = round(r['vol'] - ago[best], 2), best
+        for d in [d for d in h if (d0 - datetime.fromisoformat(d)).days > 10]:
+            del h[d]
+
+
 def main(state_path, out_path, *only):
     state_path, out_path = Path(state_path), Path(out_path)
     state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
@@ -771,6 +790,7 @@ def main(state_path, out_path, *only):
                 print(f'{name} no disponible ({e}); se conserva lo anterior: {len(r)} embalses y {len(g)} pluviómetros')
         gauges += g
         reservoirs += r
+    week_change(state, reservoirs)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     COORDS.write_text(json.dumps(dict(sorted(coords.items())), ensure_ascii=False, indent=0), encoding='utf-8')

@@ -7,7 +7,7 @@ import * as f from '../format.js';
 import { loading, errorBox } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
-import { reservoirForecast } from '../resforecast.js';
+import { reservoirForecast, inflowForecast } from '../resforecast.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
@@ -300,7 +300,7 @@ function renderReservoirs(box, d, sh) {
   // Al abrir un embalse se estima cuánto subirá con la lluvia (se calcula solo entonces: son dos peticiones)
   box.querySelectorAll('details.rv-res[data-i]').forEach((el) => el.addEventListener('toggle', () => {
     const fc = el.querySelector('.rv-fc');
-    if (el.open && fc && !fc.dataset.done) { fc.dataset.done = 1; renderForecast(fc, d.res[+el.dataset.i], d.weeks); }
+    if (el.open && fc && !fc.dataset.done) { fc.dataset.done = 1; renderForecast(fc, d.res[+el.dataset.i], d.weeks, live.get(+el.dataset.i)); }
   }));
 
   // Gráfico: % de la capacidad este año (últimas 53 semanas) frente al año anterior en las mismas semanas
@@ -330,16 +330,46 @@ function renderReservoirs(box, d, sh) {
   });
 }
 
-// ---------- Previsión de subida por la lluvia (js/resforecast.js) ----------
-async function renderForecast(box, r, weeks) {
+// ---------- Previsión a 7 días (js/resforecast.js) ----------
+const pts1 = (v) => (Math.abs(v) < 0.05 ? 'sin cambio' : `${v > 0 ? '+' : ''}${v.toFixed(1).replace('.', ',')} puntos`);
+const CONF = { alta: 'var(--ok)', media: 'var(--warm)', baja: 'var(--danger)' };
+const confHead = (c) => `<div class="rv-fc-head">Previsión 7 días <span class="rv-conf" style="color:${CONF[c]}">fiabilidad ${c}</span></div>`;
+
+// Caudal que entra: últimas 8 semanas y los próximos 15 días con la banda de los escenarios (25–75 %)
+function inflowChart(m) {
+  const pts = m.chart.filter((p) => f.isNum(p.q));
+  if (pts.length < 10) return '';
+  const W = 300, H = 64, n = pts.length - 1;
+  const top = Math.max(1, ...pts.map((p) => Math.max(p.q, p.d > m.today && f.isNum(p.hi) ? p.hi : 0))) * 1.08;
+  const X = (i) => ((i / n) * W).toFixed(1), Y = (v) => (H - 2 - (v / top) * (H - 6)).toFixed(1);
+  const ti = pts.findIndex((p) => p.d >= m.today);
+  const fut = pts.map((p, i) => [p, i]).filter(([p]) => p.d >= m.today && f.isNum(p.lo) && f.isNum(p.hi));
+  const band = fut.length > 1 ? `<polygon points="${fut.map(([p, i]) => `${X(i)},${Y(p.hi)}`).join(' ')} ${fut.reverse().map(([p, i]) => `${X(i)},${Y(p.lo)}`).join(' ')}" fill="var(--rain)" opacity=".22"/>` : '';
+  const line = (a, b) => pts.slice(a, b).map((p, i) => `${X(i + a)},${Y(p.q)}`).join(' ');
+  return `<div class="rv-fc-chart"><svg class="rv-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${band}
+      <polyline points="${line(0, ti + 1)}" fill="none" stroke="var(--rain)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      <polyline points="${line(ti, pts.length)}" fill="none" stroke="var(--rain)" stroke-width="2" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>
+      ${ti > 0 ? `<line x1="${X(ti)}" x2="${X(ti)}" y1="0" y2="${H}" stroke="var(--text-3)" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".6"/>` : ''}</svg>
+    <div class="rv-fc-axis"><span>hace 8 semanas</span>${ti > 0 ? `<span class="rv-fc-today" style="left:${((ti / n) * 100).toFixed(1)}%">hoy</span>` : ''}<span>+15 días</span></div>
+    <div class="rv-fc-cap">Agua que traen los ríos (m³/s) · máx. ${num(top / 1.08)}</div></div>`;
+}
+
+async function renderForecast(box, r, weeks, live) {
   box.innerHTML = '<div class="rv-fc-load"><div class="spinner"></div>Calculando previsión…</div>';
   try {
+    const g = await inflowForecast(r, weeks, live).catch(() => null);
+    if (g && !g.passThrough) return renderInflow(box, g);
+    // Si por sus ríos entra cada semana mucho más de lo que cabe, o es un embalse de paso (su nivel lo fija la presa)
+    // o, a 5 km de resolución, GloFAS lo confunde con un río mayor que pasa al lado: se usa la lluvia local
+    const why = g ? `<p class="note">No se usa el caudal de los ríos: según GloFAS le entrarían de media ${hm3(g.meanIn)} por semana, mucho más de lo que cabe (${hm3(r[2])}). O es un embalse de paso, cuyo nivel decide la presa, o a la resolución de GloFAS (5 km) su río se confunde con uno mayor que pasa al lado.</p>` : '';
     const m = await reservoirForecast(r, weeks);
-    const conf = m.r2 >= 0.5 ? ['alta', 'var(--ok)'] : m.r2 >= 0.2 ? ['media', 'var(--warm)'] : ['baja', 'var(--danger)'];
+    const conf = m.r2 >= 0.5 ? 'alta' : m.r2 >= 0.2 ? 'media' : 'baja';
     const responds = m.b > 0 || m.c > 0;
-    const pts = pc(m.change, m.cap);
-    box.innerHTML = `<div class="rv-fc-head">Previsión 7 días <span class="rv-conf" style="color:${conf[1]}">fiabilidad ${conf[0]}</span></div>
-      <div class="rv-fc-main">${delta(m.change)} <span class="muted">→ ${p1(pc(m.after, m.cap))} (${pts >= 0 ? '+' : ''}${pts.toFixed(1).replace('.', ',')} puntos)</span></div>
+    // Se parte del dato en tiempo real si lo hay (el boletín puede tener una semana)
+    const v0 = live && f.isNum(live.vol) ? live.vol : m.cur;
+    const after = Math.min(m.cap, Math.max(0, v0 + m.change));
+    box.innerHTML = `${confHead(conf)}
+      <div class="rv-fc-main">${delta(after - v0)} <span class="muted">→ ${p1(pc(after, m.cap))} (${pts1(pc(after - v0, m.cap))})</span></div>
       <div class="rv-cmp">
         <span>Lluvia últimos 7 días</span><b>${f.precip(m.past7, true)}</b>
         <span>Lluvia prevista 7 días</span><b>${f.precip(m.next7, true)}</b>
@@ -348,10 +378,36 @@ async function renderForecast(box, r, weeks) {
       </div>
       <p class="note">Estimación con la respuesta del embalse a la lluvia en el último año (${m.n} semanas; la lluvia explica el ${Math.round(m.r2 * 100)} % de sus cambios).
         ${responds ? `Por cada 10 mm en la zona suele subir unos ${num(10 * (m.b + m.c))} hm³.` : 'La lluvia local apenas explica sus cambios: lo mandan los desembalses o su cuenca está lejos.'}
-        No tiene en cuenta el deshielo, los desembalses previstos ni la lluvia lejos de la presa. Orientativo.</p>`;
+        No tiene en cuenta el deshielo, los desembalses previstos ni la lluvia lejos de la presa. Orientativo.</p>${why}`;
   } catch (e) {
     box.innerHTML = `<p class="note">No se pudo calcular la previsión (${f.esc(e.message)}).</p>`;
   }
+}
+
+function renderInflow(box, m) {
+  const s = m.skill;
+  const inLine = `${hm3(m.in7)}${m.in7hi - m.in7lo > 0.05 * m.in7 + 0.05 ? ` <span class="muted">(${num(m.in7lo)}–${num(m.in7hi)})</span>` : ''}`;
+  const rivers = `${m.rivers === 1 ? 'el río que le entra' : `los ${m.rivers} ríos que le entran`}`;
+  // Fiabilidad: error medio de cada semana del último año comparado con lo que cambia el embalse en una semana normal
+  const rel = s.zero > 0 ? s.mae / s.zero : 1;
+  const conf = rel < 0.5 ? 'alta' : rel < 0.8 ? 'media' : 'baja';
+  const [a, b] = m.range;
+  const range = b - a > 0.05 * Math.abs(m.change) + 0.1 ? ` <span class="muted">(entre ${num(a).replace(/^(?!-)/, '+')} y ${num(b).replace(/^(?!-)/, '+')})</span>` : '';
+  const live = m.src !== 'boletín';
+  box.innerHTML = `${confHead(conf)}
+    <div class="rv-fc-main">${delta(m.change)} <span class="muted">→ ${p1(pc(m.after, m.cap))} (${pts1(pc(m.change, m.cap))})</span>${range}</div>
+    ${inflowChart(m)}
+    <div class="rv-cmp">
+      <span>Entrará en 7 días</span><b>${inLine}</b>
+      <span>Entró los últimos 7 días</span><b>${hm3(m.inPast7)}</b>
+      <span>Ritmo actual</span><b>${delta(m.rate)}<small class="muted"> /semana</small></b>
+      <span>Se queda de lo que entra de más</span><b>${Math.round(m.k * 100)} %</b>
+    </div>
+    <p class="note">Sigue el ritmo actual del embalse (${m.rateLive ? `últimos 7 días de ${f.esc(m.src)}` : `semana del boletín hasta el ${f.dateShort(m.wkLast)}`}) y le suma la parte del cambio de entrada que suele quedarse:
+      aquí el ${Math.round(m.k * 100)} %; el resto lo sueltan. ${live ? `Parte del último dato de ${f.esc(m.src)}. ` : `Parte del boletín del ${f.dateShort(m.base)}. `}
+      Comprobado con el último año (${s.weeks} semanas): se equivoca de media en ${hm3(s.mae)} por semana, frente a ${hm3(s.pers)} si se dice «cambiará igual que la semana pasada»
+      (en una semana normal cambia ${hm3(s.zero)}).
+      Agua que entra: GloFAS (Copernicus) en ${rivers}, con el rango del 25 al 75 % de sus escenarios. No sabe de desembalses decididos de antemano.</p>`;
 }
 
 // ---------- Lluvia caída en el lugar (año hidrológico, desde el 1 de octubre) ----------
@@ -469,7 +525,8 @@ export default {
       (embalses peninsulares de más de 5 hm³; datos provisionales que se actualizan cada semana).
       Tiempo real: redes SAIH de las confederaciones del Tajo, Guadiana, Ebro, Duero, Guadalquivir, Júcar, Miño-Sil y Segura (Confederación Hidrográfica del Segura), SAI del Cantábrico (CH Cantábrico), ACA, Hidrosur y MeteoGalicia.
       Ubicación de los embalses: Wikidata y OpenStreetMap. Pluviómetros: AEMET OpenData y las redes anteriores.
-      Lluvia del año: Open-Meteo y ERA5 (Copernicus).</p>`;
+      Lluvia del año: Open-Meteo y ERA5 (Copernicus).
+      Agua que entra a los embalses: GloFAS (Copernicus Emergency Management Service) por la API de crecidas de Open-Meteo, con la red de drenaje de GloFAS v4 del JRC (CC BY 4.0).</p>`;
     const resBox = el.querySelector('#rvRes'), rainBox = el.querySelector('#rvRain');
     loading(resBox, 'Cargando embalses…');
     const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => renderReservoirs(resBox, d, sh)).catch((e) => errorBox(resBox, e, () => this.render(el)));

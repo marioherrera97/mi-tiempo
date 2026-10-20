@@ -4,7 +4,76 @@ import { getJSON } from './api.js';
 import * as f from './format.js';
 import { getSaih } from './views/reservoirs.js';
 
-export const getRivers = () => getSaih().then((d) => d.rivers || []);
+export const getRivers = () => getSaih().then(async (d) => {
+  const list = d.rivers || [];
+  // El SAIH Ebro bloquea a GitHub pero deja que la app lo pida (CORS): si no vino en saih.json, se pide aquí
+  return list.some((r) => r.src === 'SAIH Ebro') ? list : [...list, ...await ebroRivers().catch(() => [])];
+});
+
+// ---------- SAIH Ebro: aforos de sus 21 zonas (nivel y caudal, color de aviso y tendencia) ----------
+const EBRO_ZONES = ['H1-alto-ebro-mi', 'H2-semi-alta-miranda', 'H3-aragon-irati', 'H4-medio-ebro-mi', 'H5-gallego', 'H6-bajo-cinca', 'H7-segre',
+  'H8-bajo-ebro', 'H9-guadalope-martin', 'H10-bajo-jalon', 'H11-semi-alta-logrono', 'H12-arga', 'H13-nogueras', 'H15-alto-ebro-md',
+  'H16-alto-aragon', 'H17-alto-cinca', 'H18-esera', 'H19-huerva-aguas-vivas', 'H20-alto-jalon', 'H21-medio-ebro-md', 'H22-garona'];
+let ebro = null, ebroAt = 0;
+function ebroRivers() {
+  if (!ebro || Date.now() - ebroAt > 20 * 60e3) {
+    ebroAt = Date.now();
+    ebro = Promise.all(EBRO_ZONES.map((z) => {
+      const ctl = new AbortController();
+      setTimeout(() => ctl.abort(), 15000);
+      return fetch(`https://www.saihebro.com/api/mapa/getDatosMapa?slug=mapa-aforos-${z}`, { signal: ctl.signal })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    })).then((zones) => {
+      const out = new Map();
+      for (const z of zones) for (const x of z?.DATOS || []) {
+        if (x.CW_AMBITO !== 'A' || out.has(x.CW_REMOTA_TXT) || !x.LR_UTM_X) continue;
+        const tag = (k) => (x.TAGS || []).find((t) => t.LS_TIPO_SENAL === k);
+        const val = (t) => (t && t.LS_CALIDAD === 0 ? parseFloat(String(t.VALOR).replace(/\./g, '').replace(',', '.')) : null);
+        const q = val(tag('QRIO')), n = val(tag('NRIO'));
+        if (!f.isNum(q) && !f.isNum(n)) continue;
+        const [lat, lon] = utmToLatLon(x.LR_UTM_X, x.LR_UTM_Y, 30);
+        const desc = (tag('NRIO') || tag('QRIO')).LS_DESCRIPCION.replace(/^(NIVEL|CAUDAL)\s+(R[IÍ]O\s+)?/i, '');
+        const t = new Date(x.ULTIMA_FECHA.replace(' ', 'T')); // hora peninsular: la del móvil en España
+        out.set(x.CW_REMOTA_TXT, {
+          id: `E-${x.CW_REMOTA_TXT}`, name: titleEs(desc), river: null, lat, lon, q: f.isNum(q) ? q : null, n: f.isNum(n) ? n : null,
+          t: Number.isNaN(+t) ? new Date().toISOString() : t.toISOString(), src: 'SAIH Ebro', thr: null, thv: null,
+          lvl: colorLevel(x.COLOR_ESTACION), tend: { arriba: 1, abajo: -1 }[x.LS_TENDENCIA] || 0, h: [],
+        });
+      }
+      if (!out.size) throw new Error('sin datos');
+      return [...out.values()];
+    }).catch((e) => { ebro = null; throw e; });
+  }
+  return ebro;
+}
+// Color de la estación en el visor del SAIH Ebro → nivel de aviso (verde normal, amarillo, naranja, rojo)
+function colorLevel(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  if (!m) return null;
+  const [r, g, b] = m.slice(1).map((v) => parseInt(v, 16));
+  if (g > 100 && r < 100 && b < 100) return 0;
+  if (r > 180 && g < 90) return 3;
+  if (r > 180 && g < 180 && b < 100) return 2;
+  if (r > 180 && g >= 180 && b < 120) return 1;
+  return null;
+}
+const titleEs = (s) => s.toLowerCase().replace(/(^|[\s/(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase())
+  .replace(/ (De|Del|La|Las|Los|El|En|Y|A)(?= )/g, (m) => m.toLowerCase());
+// UTM (ETRS89, hemisferio norte) a latitud y longitud
+function utmToLatLon(x, y, zone) {
+  const a = 6378137, fl = 1 / 298.257223563, k0 = 0.9996, e2 = fl * (2 - fl), ep2 = e2 / (1 - e2);
+  x -= 500000;
+  const mu = y / k0 / (a * (1 - e2 / 4 - (3 * e2 ** 2) / 64 - (5 * e2 ** 3) / 256));
+  const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+  const p = mu + ((3 * e1) / 2 - (27 * e1 ** 3) / 32) * Math.sin(2 * mu) + ((21 * e1 ** 2) / 16 - (55 * e1 ** 4) / 32) * Math.sin(4 * mu)
+    + ((151 * e1 ** 3) / 96) * Math.sin(6 * mu) + ((1097 * e1 ** 4) / 512) * Math.sin(8 * mu);
+  const n1 = a / Math.sqrt(1 - e2 * Math.sin(p) ** 2), t1 = Math.tan(p) ** 2, c1 = ep2 * Math.cos(p) ** 2;
+  const r1 = (a * (1 - e2)) / (1 - e2 * Math.sin(p) ** 2) ** 1.5, d = x / (n1 * k0);
+  const lat = p - ((n1 * Math.tan(p)) / r1) * (d ** 2 / 2 - ((5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * ep2) * d ** 4) / 24
+    + ((61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * ep2 - 3 * c1 ** 2) * d ** 6) / 720);
+  const lon = (d - ((1 + 2 * t1 + c1) * d ** 3) / 6 + ((5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ep2 + 24 * t1 ** 2) * d ** 5) / 120) / Math.cos(p);
+  return [(lat * 180) / Math.PI, (zone - 1) * 6 - 180 + 3 + (lon * 180) / Math.PI];
+}
 
 // Nivel de aviso según los umbrales de cada red: 0 normal, 1 seguimiento, 2 prealerta, 3 alerta
 export const LVL = [
@@ -25,7 +94,7 @@ export const mainText = (r) => (f.isNum(r.q) ? qText(r.q) : nText(r.n));
 // Tendencia de las últimas horas: compara la media de las 3 últimas con la de 3 a 6 horas antes
 export function trend(r) {
   const h = (r.h || []).filter(f.isNum);
-  if (h.length < 5) return 0;
+  if (h.length < 5) return r.tend || 0; // sin historia propia, la tendencia que da la fuente (Ebro)
   const m = (a) => a.reduce((s, v) => s + v, 0) / a.length;
   const now = m(h.slice(-3)), before = m(h.slice(-6, -3));
   const d = now - before, base = Math.max(Math.abs(before), f.isNum(r.q) ? 0.5 : 0.05);

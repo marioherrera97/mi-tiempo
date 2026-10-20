@@ -200,8 +200,14 @@ def tajo_list(w):
         print(f'  SAIH Tajo {w}: enlace guardado sin respuesta ({e}); se busca en el menú')
     page = http(f'{TAJO}index.php')
     menu = re.search(r'index\.php\?w=get-menu&x=([^"\'&]+)', page)
-    menu_html = http(f'{TAJO}index.php?w=get-menu&x={menu[1]}') if menu else page
-    x = re.search(rf'w={w}&x=([^"\'&\\]+)', menu_html)
+    if not menu:
+        # El menú llega ahora por el «wrapper» de la portada
+        wrap = re.search(r'w=get-wrapperentorno&x=([^"\'&]+)', page)
+        if wrap:
+            url = json.loads(http(f'{TAJO}index.php?w=get-wrapperentorno&x={wrap[1]}'))['response'].get('urlmenu', '')
+            menu = re.search(r'w=get-menu&x=([A-Za-z0-9%]+)', url)
+    menu_html = (http(f'{TAJO}index.php?w=get-menu&x={menu[1]}') if menu else page).replace('\\/', '/')
+    x = re.search(rf'w={w}&x=([A-Za-z0-9%]+)', menu_html)
     if not x:
         raise RuntimeError(f'No se encuentra {w} en el menú del SAIH Tajo')
     return json.loads(http(f'{TAJO}index.php?w={w}&x={x[1]}', timeout=90))['response']
@@ -448,7 +454,7 @@ def fetch_jucar(state):
 MS = 'https://saih.chminosil.es/index.php?url='
 
 
-def fetch_minosil(state, coords):
+def minosil_opener():
     # La primera visita da la cookie de sesión y redirige a sí misma: no se siguen las redirecciones
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):
@@ -464,6 +470,26 @@ def fetch_minosil(state, coords):
     except urllib.error.HTTPError as e:
         if e.code not in (301, 302):
             raise
+    return op
+
+
+def minosil_coords(op, code, coords, budget):
+    """Coordenadas de una estación (de su ficha, una sola vez; se guardan en saih_coords.json)."""
+    key = f'minosil:{code}'
+    if key not in coords and budget[0] > 0:
+        budget[0] -= 1
+        time.sleep(0.3)
+        try:
+            f = re.sub(r'\s+', ' ', htmlmod.unescape(re.sub(r'<[^>]+>', ' ', http(MS + f'/datos/ficha/estacion:{code}/area:MET', opener=op))))
+            m = re.search(r'Huso X Y Z (\d\d) ([\d.]+) ([\d.]+)', f)
+            coords[key] = list(utm_to_latlon(float(m[2]), float(m[3]), int(m[1]))) if m else None
+        except Exception as e:  # noqa: BLE001
+            print(f'  Miño-Sil {code}: {e}')
+    return coords.get(key)
+
+
+def fetch_minosil(state, coords):
+    op = minosil_opener()
     hourly = Hourly(state, 'minosil')
     vals = {}
     for c in rows(http(MS + '/datos/resumenPluviometria', opener=op, timeout=90)):
@@ -472,19 +498,9 @@ def fetch_minosil(state, coords):
             sig = c[2].replace(' ', '').lower()
             v = vals.setdefault(code, {'name': name, 't': c[7]})
             v[{'precip.1h': 1, 'precip.12h': 12, 'precip.24h': 24}.get(sig, 0)] = num(c[6])
-    gauges, new = [], 0
+    gauges, budget = [], [NEW_COORDS_PER_RUN]
     for code, v in vals.items():
-        key = f'minosil:{code}'
-        if key not in coords and new < NEW_COORDS_PER_RUN:
-            new += 1
-            time.sleep(0.3)
-            try:
-                f = re.sub(r'\s+', ' ', htmlmod.unescape(re.sub(r'<[^>]+>', ' ', http(MS + f'/datos/ficha/estacion:{code}/area:MET', opener=op))))
-                m = re.search(r'Huso X Y Z (\d\d) ([\d.]+) ([\d.]+)', f)
-                coords[key] = list(utm_to_latlon(float(m[2]), float(m[3]), int(m[1]))) if m else None
-            except Exception as e:  # noqa: BLE001
-                print(f'  Miño-Sil {code}: {e}')
-        ll = coords.get(key)
+        ll = minosil_coords(op, code, coords, budget)
         if not ll:
             continue
         t = local_to_utc(datetime.strptime(v['t'], '%d/%m/%Y %H:%M'))
@@ -736,7 +752,8 @@ def enrich(reservoirs):
 
 # ---------- Ríos: caudal y nivel de las estaciones de aforo ----------
 # Cada red da el último dato; el nivel de aviso sale de sus propios umbrales cuando los publica
-# (0 normal, 1 seguimiento o aviso, 2 prealerta, 3 alerta). Sin fuente accesible: Tajo, Ebro, Segura y Miño-Sil.
+# (0 normal, 1 seguimiento o aviso, 2 prealerta, 3 alerta). El SAIH Ebro bloquea a GitHub: sus aforos los pide la app
+# (js/rivers.js). Sin fuente accesible: Segura.
 def river(id_, name, river_, lat, lon, q, n, t, src, thr=None, thv=None, lvl=None):
     q = round(q, 2) if isinstance(q, (int, float)) and q >= 0 else None
     n = round(n, 2) if isinstance(n, (int, float)) else None
@@ -912,14 +929,61 @@ def rivers_guadalquivir():
     return out
 
 
+def title_es(s):
+    """'TAJO EN AZUD DE C.N. TRILLO' -> 'Tajo en Azud de C.N. Trillo'."""
+    t = re.sub(r'(^|[\s/(-])(\w)', lambda m: m[1] + m[2].upper(), s.lower())
+    return re.sub(r' (De|Del|La|Las|Los|El|En|Y|A)(?= )', lambda m: m[0].lower(), t)
+
+
+def rivers_tajo(coords):
+    # Solo dan el último valor (nivel o caudal) con sus umbrales y su estado (0 normal … 3 rojo), sin hora: la de ahora
+    out = []
+    for a in tajo_list('get-aforosenrio')['aforos']:
+        e, v = a.get('estacion') or {}, a.get('value')
+        utm = e.get('utm') or {}
+        if not isinstance(v, (int, float)) or not utm.get('x'):
+            continue
+        lat, lon = utm_to_latlon(float(utm['x']), float(utm['y']), int(utm.get('huso') or 30))
+        is_q = 'm3' in re.sub(r'<[^>]+>', '', a.get('unidad') or '')
+        thr = [num(a.get('umbral1')), num(a.get('umbral2')), num(a.get('umbral3'))]
+        lvl = a.get('codigoestado')
+        out.append(river(f'T-{a["codigo"]}', title_es(a.get('nombre') or e.get('nombre') or a['codigo']), None, lat, lon,
+                         v if is_q else None, None if is_q else v, iso(NOW.replace(minute=0, second=0, microsecond=0)), 'SAIH Tajo',
+                         thr if all(thr) else None, 'q' if is_q else 'n', lvl if isinstance(lvl, int) and 0 <= lvl <= 3 else None))
+    return out
+
+
+def rivers_minosil(coords):
+    # Tabla de niveles con los umbrales rojo, naranja y amarillo de cada estación
+    op = minosil_opener()
+    out, seen, budget = [], set(), [NEW_COORDS_PER_RUN]
+    for c in rows(http(MS + '/datos/resumen', opener=op, timeout=90)):
+        if len(c) < 7 or not re.match(r'^[A-Z]\d{3} - ', c[1]):
+            continue
+        code, name = c[1].split(' - ', 1)
+        n = num(c[5])
+        if code in seen or n is None:
+            continue
+        seen.add(code)
+        ll = minosil_coords(op, code, coords, budget)
+        if not ll:
+            continue
+        thr = [num(c[4]), num(c[3]), num(c[2])]
+        out.append(river(f'M-{code}', title_es(re.sub(r'^R[IÍ]O\s+', '', name)), None, ll[0], ll[1], None, n,
+                         iso(local_to_utc(datetime.strptime(c[6], '%d/%m/%Y %H:%M'))), 'SAIH Miño-Sil', thr if all(thr) else None, 'n'))
+    return out
+
+
 RIVER_SOURCES = [
-    ('SAIH Duero', rivers_duero),
-    ('SAIH Júcar', rivers_jucar),
-    ('ACA', rivers_aca),
-    ('SAI Cantábrico', rivers_cantabrico),
-    ('SIRA Guadiana', rivers_guadiana),
-    ('Hidrosur', rivers_hidrosur),
-    ('SAIH Guadalquivir', rivers_guadalquivir),
+    ('SAIH Tajo', rivers_tajo),
+    ('SAIH Miño-Sil', rivers_minosil),
+    ('SAIH Duero', lambda c: rivers_duero()),
+    ('SAIH Júcar', lambda c: rivers_jucar()),
+    ('ACA', lambda c: rivers_aca()),
+    ('SAI Cantábrico', lambda c: rivers_cantabrico()),
+    ('SIRA Guadiana', lambda c: rivers_guadiana()),
+    ('Hidrosur', lambda c: rivers_hidrosur()),
+    ('SAIH Guadalquivir', lambda c: rivers_guadalquivir()),
 ]
 
 
@@ -1004,7 +1068,7 @@ def main(state_path, out_path, *only):
         else:
             t0 = time.time()
             try:
-                rv = fn()
+                rv = fn(coords)
                 rlast[name] = rv
                 print(f'{name}: {len(rv)} estaciones de aforo ({time.time() - t0:.0f} s)')
             except Exception as e:  # noqa: BLE001

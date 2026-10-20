@@ -9,7 +9,7 @@ import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
 import { reservoirForecast, inflowForecast } from '../resforecast.js';
 import { normals } from '../normals.js';
-import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle } from '../rivers.js';
+import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle, getRivers } from '../rivers.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
@@ -487,8 +487,7 @@ async function renderRain(box) {
 }
 
 // ---------- Ríos: estaciones de aforo cerca del lugar y las que están en aviso ----------
-function renderRivers(box, sh, focusId) {
-  const all = sh?.rivers || [];
+function renderRivers(box, all, focusId) {
   if (!all.length) { box.innerHTML = ''; return; }
   const here = state.place;
   const focus = focusId ? all.find((r) => r.id === focusId) : null;
@@ -503,7 +502,7 @@ function renderRivers(box, sh, focusId) {
     ${near.length ? `<div class="card rv-list"><div class="card-head"><h2>Cerca de ${f.esc(here.name)}</h2><span class="tiny">caudal medido ahora</span></div>
       ${near.map(([r, km]) => riverRow(r, km)).join('')}</div>`
       : `<p class="note">No hay estaciones de aforo con datos públicos a menos de 60 km. ${warn.length ? '' : 'Ningún río de las redes con umbrales está en aviso ahora.'}</p>`}
-    <p class="note rv-livenote">${all.length} estaciones de aforo en tiempo real (SAIH Duero, Júcar y Guadalquivir, SIRA Guadiana, SAI Cantábrico, ACA e Hidrosur). Los avisos usan los umbrales de cada confederación. Tajo, Ebro, Segura y Miño-Sil no publican el caudal de forma accesible.</p>`;
+    <p class="note rv-livenote">${all.length} estaciones de aforo en tiempo real (SAIH Tajo, Ebro, Duero, Miño-Sil, Júcar y Guadalquivir, SIRA Guadiana, SAI Cantábrico, ACA e Hidrosur). Los avisos usan los umbrales de cada confederación. Tajo, Miño-Sil e Hidrosur solo dan el nivel del río, no el caudal. El Segura no lo publica de forma accesible.</p>`;
   box.querySelectorAll('details.rv-river').forEach((el) => el.addEventListener('toggle', () => {
     const fc = el.querySelector('.rv-fc');
     const r = all.find((x) => x.id === el.dataset.r);
@@ -512,11 +511,11 @@ function renderRivers(box, sh, focusId) {
 }
 
 // #/embalses?r=estación (desde el mapa): se abre su ficha arriba de la sección de ríos
-function focusRiver(el, sh) {
+function focusRiver(el, all) {
   const id = new URLSearchParams(location.hash.split('?')[1] || '').get('r');
   const box = el.querySelector('#rvRivers');
   if (!id || !box) return;
-  if (box.dataset.focus !== id) { box.dataset.focus = id; renderRivers(box, sh, id); }
+  if (box.dataset.focus !== id) { box.dataset.focus = id; renderRivers(box, all, id); }
   const row = box.querySelector(`details.rv-river[data-r="${CSS.escape(id)}"]`);
   if (!row) return;
   row.open = true;
@@ -547,7 +546,7 @@ function focusReservoir(el) {
 }
 
 export default {
-  show(el) { focusReservoir(el); getSaih().then((sh) => focusRiver(el, sh)).catch(() => {}); },
+  show(el) { focusReservoir(el); getRivers().then((all) => focusRiver(el, all)).catch(() => {}); },
   async render(el) {
     el.innerHTML = `<div id="rvRes"></div><div id="rvRivers"></div><div class="section-title">Lluvia</div><div id="rvGauges"></div><div id="rvRain"></div>
       <p class="footer-note">Embalses: <a href="https://www.miteco.gob.es/es/agua/temas/evaluacion-de-los-recursos-hidricos/boletin-hidrologico.html" target="_blank" rel="noopener">Boletín Hidrológico del MITECO</a>
@@ -561,9 +560,8 @@ export default {
     loading(resBox, 'Cargando embalses…');
     const res = Promise.all([getData(), getSaih().catch(() => null)]).then(([d, sh]) => {
       renderReservoirs(resBox, d, sh);
-      renderRivers(el.querySelector('#rvRivers'), sh);
       focusReservoir(el);
-      focusRiver(el, sh);
+      getRivers().then((all) => { renderRivers(el.querySelector('#rvRivers'), all); focusRiver(el, all); }).catch(() => {});
     }).catch((e) => errorBox(resBox, e, () => this.render(el)));
     const rain = renderRain(rainBox).catch((e) => errorBox(rainBox, e, () => renderRain(rainBox)));
     const gBox = el.querySelector('#rvGauges');

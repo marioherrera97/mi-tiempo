@@ -10,6 +10,7 @@ import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
 import * as rv from './reservoirs.js';
 import * as rivers from '../rivers.js';
+import * as bolt from '../lightning.js';
 import { getForecast } from '../data.js';
 import { wxIcon } from '../icons.js';
 import * as own from '../owndata.js';
@@ -93,6 +94,7 @@ const LAYERS = {
   dust: { label: 'Calima (polvo)', cat: 'Aire', src: () => ['air', 'dust'], scale: 'dust', range: () => [0, 1000], unit: 'ugm3' },
   radar: { label: 'Radar de lluvia', short: 'Radar', cat: 'Observación', kind: 'radar' },
   radarsat: { label: 'Radar + satélite', cat: 'Observación', kind: 'radar', sat: true },
+  lightning: { label: 'Rayos y radar', short: 'Rayos', cat: 'Observación', kind: 'radar', light: true },
   sat: { label: 'Satélite', cat: 'Observación', kind: 'sat' },
 };
 
@@ -557,6 +559,7 @@ function applyLayer() {
   if (!spec.levels) S.level = 'surface';
   showRadarFrame();
   showSat();
+  showLightning();
   styleBorders();
   styleWater();
   buildMenu();
@@ -588,6 +591,20 @@ function showRadarFrame() {
     if (!S.map.hasLayer(l)) l.addTo(S.map);
     l.setOpacity(i === S.radar.idx ? 0.8 : 0);
   });
+}
+
+// ---------- Rayos (Meteosat MTG): la última media hora encima del radar ----------
+async function showLightning() {
+  (S.boltLayers || []).forEach((l) => S.map.removeLayer(l));
+  S.boltLayers = [];
+  if (!LAYERS[S.layer].light) return;
+  const t0 = await bolt.latestTime();
+  if (!LAYERS[S.layer].light) return;
+  (S.boltLayers || []).forEach((l) => S.map.removeLayer(l));
+  S.boltT = t0;
+  S.boltLayers = bolt.mapLayers(L, t0);
+  S.boltLayers.forEach((l) => l.addTo(S.map));
+  updateLegend();
 }
 
 // ---------- Satélite (animado: últimas 2 h cada 15 min) ----------
@@ -675,7 +692,7 @@ const LAYER_ICON = {
   temp: 'temp', feels: 'temp', uv: 'sun', dew: 'temp', freezing: 'snow', humidity: 'drop',
   clouds: 'cloud', lowclouds: 'cloud', midclouds: 'cloud', highclouds: 'cloud', visibility: 'eye', pressure: 'gauge',
   waves: 'wave', swell: 'wave', windwaves: 'wave', waveperiod: 'wave', sst: 'temp', currents: 'wave',
-  aqi: 'leaf', pm25: 'leaf', dust: 'leaf', radar: 'radar', radarsat: 'radar', sat: 'sat',
+  aqi: 'leaf', pm25: 'leaf', dust: 'leaf', radar: 'radar', radarsat: 'radar', sat: 'sat', lightning: 'bolt',
 };
 const CATS = ['Todo', 'Viento', 'Temperatura', 'Lluvia y nieve', 'Nubes', 'Presión', 'Mar', 'Aire', 'Observación'];
 const DAYS_LONG = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -699,7 +716,7 @@ function thumb(k) {
   return `<span class="w-thumb" data-th="${k}" style="background:${bg}">${SVG(IC[LAYER_ICON[k]] || IC.wind)}</span>`;
 }
 // Lista de capas a la derecha en pantallas grandes (como la de Windy): nombre y miniatura redonda
-const QUICK = ['radar', 'sat', 'wind', 'rain', 'temp', 'clouds', 'waves', 'rainacc', 'cape', 'gust', 'pressure'];
+const QUICK = ['radar', 'lightning', 'sat', 'wind', 'rain', 'temp', 'clouds', 'waves', 'rainacc', 'cape', 'gust', 'pressure'];
 function buildQuick() {
   const box = el('wQuick');
   if (!box) return;
@@ -732,6 +749,12 @@ function niceTicks(min, max) {
 function updateLegend() {
   const spec = LAYERS[S.layer];
   const box = el('mapLegend');
+  if (spec.light) {
+    const age = S.boltT ? Math.round((Date.now() - S.boltT) / 60e3) : null;
+    box.innerHTML = `<span class="w-unit">⚡</span><div class="w-lbar" style="background:linear-gradient(90deg,#fff5b8,#ffc04d,#ff7a1a,#d7191c,#7a0019)">
+      <span style="left:12%">pocos</span><span style="left:50%">rayos en media hora${age !== null ? ` · hasta hace ${age} min` : ''}</span><span style="left:90%">muchos</span></div>`;
+    return;
+  }
   if (spec.kind === 'radar') {
     box.innerHTML = `<span class="w-unit">mm/h</span><div class="w-lbar" style="background:linear-gradient(90deg,#88ddee,#0099cc,#0077aa,#ffee00,#ff9900,#ff4400,#c10000,#ff00ff)">
       <span style="left:8%">débil</span><span style="left:50%">moderada</span><span style="left:92%">intensa</span></div>`;
@@ -1529,6 +1552,7 @@ export default {
       setInterval(() => {
         if (S.playing) return;
         if (LAYERS[S.layer].kind === 'radar') loadRadar();
+        if (LAYERS[S.layer].light) showLightning();
         if (LAYERS[S.layer].kind === 'sat' || LAYERS[S.layer].sat) { showSat(); updateSlider(); }
       }, 5 * 60e3);
       return;

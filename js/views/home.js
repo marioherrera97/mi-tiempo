@@ -8,6 +8,7 @@ import { css, aqiLevel } from '../colors.js';
 import { loading, errorBox, openSheet, $ } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { outfit, figure } from '../outdoor.js';
+import { nearby as nearbyLightning } from '../lightning.js';
 
 export function nowIndex(d) {
   const key = (d.current?.time || f.placeNow(d.utc_offset_seconds)).slice(0, 13);
@@ -226,6 +227,20 @@ async function sunsetCard(el) {
   } catch { el.innerHTML = ''; }
 }
 
+// ---------- Rayos cerca (Meteosat MTG, última media hora): solo aparece si hay tormenta a menos de 100 km ----------
+async function boltCard(el) {
+  try {
+    const b = await nearbyLightning(state.place, 100);
+    if (!b) { el.innerHTML = ''; return; }
+    const where = b.km < 3 ? 'encima' : `a ${f.distance(b.km * 1000)} al ${b.dir}`;
+    const col = b.km < 15 ? 'var(--danger)' : b.km < 40 ? 'var(--warm)' : 'var(--text-2)';
+    el.innerHTML = `<a class="card bolt-card" href="#/mapa" style="display:block;color:inherit;margin-top:12px" data-bolt>
+      <div class="card-head"><h2 style="color:${col}">⚡ Rayos ${where}</h2><span class="small" style="color:var(--accent)">Ver en el mapa →</span></div>
+      <p class="note" style="margin:0">${b.trend > 0 ? '<b>La tormenta se acerca.</b> ' : b.trend < 0 ? 'La tormenta se aleja. ' : ''}Rayos detectados por el satélite Meteosat en la media hora hasta hace ${b.age} min${b.km < 15 ? '. Evita zonas abiertas, árboles aislados y el agua' : ''}.</p></a>`;
+    el.querySelector('[data-bolt]').onclick = () => { try { localStorage.setItem('mitiempo.map.layer', '"lightning"'); } catch { /* sin almacenamiento */ } };
+  } catch { el.innerHTML = ''; }
+}
+
 async function airCard(el) {
   try {
     const a = await api.airQuality(state.place);
@@ -296,6 +311,7 @@ export default {
       el.innerHTML = `
         ${hero(d)}
         ${nowcast(d)}
+        <div id="homeBolt"></div>
         ${hourStrip(d, ni)}
         ${wearCard(d)}
         ${dailyList(d)}
@@ -309,6 +325,7 @@ export default {
         Actualizado ${f.relTime(lastUpdate)} · Datos: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0)</p>`;
       el.querySelectorAll('.drow').forEach((b) => { b.onclick = () => openDay(d, +b.dataset.day); });
       sunsetCard(el.querySelector('#homeSunset'));
+      boltCard(el.querySelector('#homeBolt'));
       airCard(el.querySelector('#homeAir'));
     } catch (e) {
       errorBox(el, e, () => this.render(el));

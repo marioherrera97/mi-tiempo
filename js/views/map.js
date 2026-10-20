@@ -428,7 +428,8 @@ async function loadPlaceTiles() {
 // Lugar elegido y favoritos, rotulados en el mapa con su valor
 function updatePlaces() {
   const seen = new Set();
-  const list = [state.place, ...state.favorites].filter((p) => {
+  // Un punto tocado en el mapa no lleva rótulo: tiene el nombre del pueblo más cercano y lo repetiría
+  const list = [...(state.place.picked ? [] : [state.place]), ...state.favorites].filter((p) => {
     const k = p.lat.toFixed(2) + p.lon.toFixed(2);
     if (seen.has(k)) return false;
     seen.add(k);
@@ -1076,7 +1077,7 @@ function commitPick(latlng, recent = true) {
   // El punto tocado pasa a ser el lugar seleccionado (como en Windy); su pronóstico se pide ya, a la vez que el nombre
   prefetchPlace({ lat: latlng.lat, lon: latlng.lng });
   api.reverseGeocode(latlng.lat, latlng.lng).then((p) => {
-    p.lat = latlng.lat; p.lon = latlng.lng;
+    p.lat = latlng.lat; p.lon = latlng.lng; p.picked = true;
     S.keepView = true;
     setPlace(p, { recent });
   });

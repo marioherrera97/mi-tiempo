@@ -1146,7 +1146,7 @@ function showGauges() {
   draw();
   S.gaugeTimer = setInterval(draw, 30 * 60e3); // se rehacen cada hora en el servidor
 }
-// Ríos: caudal medido en las estaciones de aforo, del color de su nivel de aviso (los que están en aviso, encima)
+// Ríos: caudal medido en las estaciones de aforo (o el nivel si no dan caudal), siempre con su unidad, del color de su nivel de aviso (los que están en aviso, encima)
 function showRivers() {
   clearInterval(S.riverTimer);
   if (!S.rivers) { S.field.setRivers(null); S.map.closePopup(); return; }
@@ -1157,7 +1157,7 @@ function showRivers() {
     S.field.setRivers(list.filter((r) => f.isNum(r.q) || f.isNum(r.n))
       .sort((a, b) => (b.lvl || 0) - (a.lvl || 0) || val(b) - val(a)).map((r) => {
         const st = rivers.lvlStyle(r), tr = rivers.trend(r);
-        return { r, lat: r.lat, lon: r.lon, zero: f.isNum(r.q) && r.q < 0.05 && !(r.lvl > 0), text: `${rivers.mainText(r).replace(' m³/s', '')}${tr ? ' ' + rivers.trendIcon(tr) : ''}`, bg: st.bg, fg: st.fg };
+        return { r, lat: r.lat, lon: r.lon, zero: f.isNum(r.q) && r.q < 0.05 && !(r.lvl > 0), text: `${rivers.mainText(r)}${tr ? ' ' + rivers.trendIcon(tr) : ''}`, bg: st.bg, fg: st.fg };
       }));
   }).catch(() => { S.field.setRivers(null); toast('Todavía no hay datos de ríos'); S.rivers = false; save('map.rivers', false); buildMenu(); });
   draw();
@@ -1266,7 +1266,7 @@ function buildMenu() {
     ${tog('water', 'Lagos y embalses', S.water)}
     ${tog('reservoirs', 'Embalses: % de llenado', S.reservoirs)}
     ${tog('gauges', 'Pluviómetros: lluvia medida', S.gauges)}
-    ${tog('rivers', 'Ríos: caudal medido (m³/s)', S.rivers)}
+    ${tog('rivers', 'Ríos: caudal (m³/s) o nivel (m)', S.rivers)}
     <div class="wm-row"><span>Isolíneas</span>${sel('iso', ISO_MODES, S.iso)}</div>
     <div class="wm-row"><span>Mapa base</span>${sel('base', [['dark', 'Oscuro'], ['light', 'Claro'], ['imagery', 'Satélite (foto)'], ['osm', 'OpenStreetMap'], ['topo', 'Topográfico']], settings.mapBase)}</div>
     <div class="wm-row"><span>Horizonte</span>${sel('days', [[2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '7 días'], [10, '10 días']], S.days)}</div>

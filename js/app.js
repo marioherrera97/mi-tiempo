@@ -1,5 +1,5 @@
 // Arranque de la app: navegación, cabecera y buscador de lugares
-import { state, on, setPlace, toggleFavorite, isFavorite, removeRecent } from './state.js';
+import { state, settings, on, setPlace, toggleFavorite, isFavorite, removeRecent } from './state.js';
 import * as api from './api.js';
 import { refresh } from './data.js';
 import { $, $$, openSheet, closeSheet, initSheets, toast, debounce } from './ui.js';
@@ -154,10 +154,16 @@ function init() {
     setTimeout(() => b.classList.remove('spin'), 900);
   };
 
-  on('place', () => { updateHeader(); invalidateAll(); });
+  // App Android: el widget de la pantalla de inicio muestra el lugar elegido
+  const toWidget = () => {
+    try { globalThis.MiTiempoAndroid?.setPlace(JSON.stringify({ name: state.place.name, lat: state.place.lat, lon: state.place.lon, temp: settings.temp })); } catch { /* sin puente */ }
+  };
+  toWidget();
+  on('place', () => { updateHeader(); invalidateAll(); toWidget(); });
+  on('placeinfo', toWidget);
   on('placeinfo', updateHeader);
   on('favorites', updateHeader);
-  on('settings', invalidateAll);
+  on('settings', () => { invalidateAll(); toWidget(); });
   on('refresh', invalidateAll);
 
   window.addEventListener('hashchange', route);

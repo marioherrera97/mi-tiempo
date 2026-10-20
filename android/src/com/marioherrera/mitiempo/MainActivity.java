@@ -10,12 +10,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.Window;
 import android.webkit.GeolocationPermissions;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import org.json.JSONObject;
 
 /**
  * Mi Tiempo: abre la app web publicada a pantalla completa. Al cargar siempre la versión publicada,
@@ -49,6 +52,8 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setTextZoom(100); // el diseño ya está pensado para móvil
         s.setUserAgentString(s.getUserAgentString() + " MiTiempoApp/1");
+        // La web avisa del lugar elegido para que el widget de la pantalla de inicio muestre ese
+        web.addJavascriptInterface(new Bridge(), "MiTiempoAndroid");
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -81,6 +86,23 @@ public class MainActivity extends Activity {
 
         if (state != null) web.restoreState(state);
         else web.loadUrl(APP_URL);
+    }
+
+    /** Puente con la web (solo se cargan páginas de APP_HOST: lo demás se abre en el navegador). */
+    private class Bridge {
+        @JavascriptInterface
+        public void setPlace(String json) {
+            try {
+                JSONObject o = new JSONObject(json);
+                getSharedPreferences(WeatherWidget.PREFS, MODE_PRIVATE).edit()
+                    .putString("name", o.getString("name"))
+                    .putFloat("lat", (float) o.getDouble("lat"))
+                    .putFloat("lon", (float) o.getDouble("lon"))
+                    .putString("temp", o.optString("temp", "c"))
+                    .apply();
+                WeatherWidget.updateAll(getApplicationContext());
+            } catch (Exception ignored) { }
+        }
     }
 
     private boolean hasLocation() {

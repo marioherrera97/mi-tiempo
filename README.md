@@ -51,6 +51,9 @@ Alternativas igual de válidas: Netlify Drop (arrastrar la carpeta a <https://ap
 
 `android/` contiene una app Android mínima (sin Gradle) que abre la web publicada a pantalla completa,
 con permiso de ubicación y botón atrás. Al cargar siempre la versión publicada, se actualiza sola.
+Trae un **widget** para la pantalla de inicio (4×2, redimensionable): temperatura, cielo, máxima y mínima, cuándo llueve en las
+próximas 12 h y las 5 horas siguientes del lugar elegido en la app (la web se lo pasa por `MiTiempoAndroid.setPlace`).
+Se actualiza cada 30 min, al abrir la app y al cambiar de lugar. Las mejoras del widget sí necesitan instalar la APK nueva.
 
 ```bash
 python android/build.py 2 1.1

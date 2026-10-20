@@ -747,3 +747,9 @@ select.xsel-native { display: none !important; }
 .r3-load { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-2); z-index: 3; font-size: 14px; text-align: center; padding: 20px; }
 .view-relief .maplibregl-ctrl-bottom-right { bottom: 4px; }
 .view-relief .maplibregl-ctrl-attrib { font-size: 10px; }
+
+/* ¿Qué modelo acierta aquí? (Comparar modelos) */
+.vf-best { margin: 0 0 10px; font-size: 14px; }
+.vf-table tr.vf-top td { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.vf-table .vf-use { padding: 3px 10px; font-size: 12px; min-height: 0; }
+.vf-y { margin: 12px 0 0; font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: 10px; background: var(--bg-2, rgba(127,127,127,.08)); }

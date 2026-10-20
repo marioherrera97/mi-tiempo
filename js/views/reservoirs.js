@@ -8,6 +8,7 @@ import { loading, errorBox } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
 import { reservoirForecast, inflowForecast } from '../resforecast.js';
+import { normals } from '../normals.js';
 
 let data = null;
 export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
@@ -391,25 +392,13 @@ function renderInflow(box, m) {
 // ---------- Lluvia caída en el lugar (año hidrológico, desde el 1 de octubre) ----------
 const hydroStart = (ymd) => `${+ymd.slice(5, 7) >= 10 ? ymd.slice(0, 4) : +ymd.slice(0, 4) - 1}-10-01`;
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
-const normKey = () => `rainnorm:${state.place.lat.toFixed(2)},${state.place.lon.toFixed(2)}`;
-
-// Lluvia media de cada día del año (MM-DD) en 1991–2020 (ERA5); se calcula una vez por lugar y se guarda
-async function rainNormals() {
-  const saved = load(normKey(), null);
-  if (saved) return saved;
-  const d = await api.archive(state.place, '1991-01-01', '2020-12-31', ['precipitation_sum'], { ttl: 0 });
-  const sum = {}, n = {};
-  d.daily.time.forEach((t, i) => {
-    const v = d.daily.precipitation_sum[i];
-    if (!f.isNum(v)) return;
-    const k = t.slice(5, 10);
-    sum[k] = (sum[k] || 0) + v;
-    n[k] = (n[k] || 0) + 1;
-  });
-  const res = Object.fromEntries(Object.keys(sum).map((k) => [k, +(sum[k] / n[k]).toFixed(2)]));
-  save(normKey(), res);
-  return res;
-}
+// Lluvia media de cada día del año (MM-DD) en 1991–2020 (ERA5), compartida con Histórico (js/normals.js)
+const rainNormals = async () => {
+  const old = load(`rainnorm:${state.place.lat.toFixed(2)},${state.place.lon.toFixed(2)}`, null); // guardadas por versiones anteriores
+  if (old) return old;
+  const n = await normals(state.place);
+  return Object.fromEntries(Object.entries(n.days).map(([k, v]) => [k, v.pr || 0]));
+};
 
 async function renderRain(box) {
   const p = state.place;

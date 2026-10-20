@@ -5,6 +5,7 @@ import * as f from '../format.js';
 import { loading, errorBox, chips } from '../ui.js';
 import { makeChart, baseOptions, theme, alpha, mean } from '../charts.js';
 import { getForecast } from '../data.js';
+import { normals, savedNormals, forgetNormals } from '../normals.js';
 
 const view = { preset: '30', start: null, end: null };
 const VARS = ['temperature_2m_max', 'temperature_2m_min', 'temperature_2m_mean', 'precipitation_sum', 'wind_speed_10m_max', 'sunshine_duration'];
@@ -80,41 +81,23 @@ async function renderPast(box) {
 }
 
 // ---------- Normales climáticas 1991–2020 ----------
-const normKey = () => `normals:${state.place.lat.toFixed(2)},${state.place.lon.toFixed(2)}`;
-
-async function computeNormals() {
-  const d = await api.archive(state.place, '1991-01-01', '2020-12-31', ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum'], { ttl: 0 });
-  const dd = d.daily;
-  const months = Array.from({ length: 12 }, () => ({ mx: [], mn: [], pr: 0, rainy: 0 }));
-  const byDoy = {}; // "MM-DD" → { mx: [], mn: [], recMax, recMin }
-  dd.time.forEach((t, i) => {
-    const m = +t.slice(5, 7) - 1, md = t.slice(5, 10);
-    const mx = dd.temperature_2m_max[i], mn = dd.temperature_2m_min[i], pr = dd.precipitation_sum[i];
-    if (f.isNum(mx)) months[m].mx.push(mx);
-    if (f.isNum(mn)) months[m].mn.push(mn);
-    if (f.isNum(pr)) { months[m].pr += pr; if (pr >= 1) months[m].rainy++; }
-    const b = (byDoy[md] ||= { mx: [], mn: [], recMax: [-99, ''], recMin: [99, ''] });
-    if (f.isNum(mx)) { b.mx.push(mx); if (mx > b.recMax[0]) b.recMax = [mx, t.slice(0, 4)]; }
-    if (f.isNum(mn)) { b.mn.push(mn); if (mn < b.recMin[0]) b.recMin = [mn, t.slice(0, 4)]; }
-  });
-  const res = {
-    months: months.map((m) => ({ mx: mean(m.mx), mn: mean(m.mn), pr: m.pr / 30, rainy: m.rainy / 30 })),
-    days: Object.fromEntries(Object.entries(byDoy).map(([k, b]) => [k, { mx: mean(b.mx), mn: mean(b.mn), recMax: b.recMax, recMin: b.recMin }])),
-  };
-  save(normKey(), res);
-  return res;
-}
+// 30 años de datos: se descargan por tramos y se comparten con Embalses (js/normals.js)
+const computeNormals = (box) => normals(state.place, (x) => {
+  const t = box?.querySelector('.loading');
+  if (t) t.lastChild.textContent = `Descargando 30 años de datos… ${Math.round(x * 100)} %`;
+});
 
 async function renderClimate(box) {
-  const norms = load(normKey(), null);
+  // (las de versiones anteriores se guardaban por lugar exacto)
+  const norms = savedNormals(state.place) || load(`normals:${state.place.lat.toFixed(2)},${state.place.lon.toFixed(2)}`, null);
   if (!norms) {
     box.innerHTML = `<div class="card"><h2>Normales climáticas 1991–2020</h2>
       <p class="note">Calcula las medias de 30 años para este lugar: temperatura normal de cada mes, lluvia media y récords de cada día del año.
-      Es una descarga grande (≈11.000 días), así que se hace una vez y se guarda en el móvil.</p>
+      Es una descarga grande (≈11.000 días): se hace por partes, una vez para esta zona, y se guarda en el móvil.</p>
       <button class="btn" id="calcNorm">Calcular normales</button></div>`;
     box.querySelector('#calcNorm').onclick = async () => {
       loading(box, 'Descargando 30 años de datos… (puede tardar unos segundos)');
-      try { await computeNormals(); renderClimate(box); } catch (e) { errorBox(box, e, () => renderClimate(box)); }
+      try { await computeNormals(box); renderClimate(box); } catch (e) { errorBox(box, e, () => renderClimate(box)); }
     };
     return;
   }
@@ -147,7 +130,11 @@ async function renderClimate(box) {
       <tbody>${norms.months.map((m, i) => `<tr><td>${MES[i]}</td><td class="r">${f.temp(m.mx)}</td><td class="r">${f.temp(m.mn)}</td><td class="r">${f.precip(m.pr, true)}</td><td class="r">${m.rainy.toFixed(0)}</td></tr>`).join('')}</tbody></table>
       <button class="btn ghost" id="recalc" style="margin-top:10px">Recalcular</button></div>
     <p class="note">Fuente: reanálisis ERA5 (Copernicus/ECMWF) vía Open-Meteo. Es un modelo de rejilla (~25 km), puede diferir de una estación local.</p>`;
-  box.querySelector('#recalc').onclick = async () => { loading(box); await computeNormals(); renderClimate(box); };
+  box.querySelector('#recalc').onclick = async () => {
+    forgetNormals(state.place);
+    loading(box, 'Descargando 30 años de datos…');
+    try { await computeNormals(box); renderClimate(box); } catch (e) { errorBox(box, e, () => renderClimate(box)); }
+  };
   const t = theme();
   makeChart(document.getElementById('climChart'), {
     data: {

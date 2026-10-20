@@ -86,9 +86,11 @@ export async function reservoirForecast(r, weeks) {
   const wk = weeks.slice(-series.length);
   const P = pts(lat, lon);
   const today = f.todayISO();
-  const end = f.addDays(today, -6); // ERA5 llega con unos 5 días de retraso
+  // Un año en 5 puntos son ~130 consultas de Open-Meteo: se piden hasta una semana antes del último boletín (ERA5
+  // llega con unos 5 días de retraso), así la petición es la misma toda la semana y se reaprovecha
+  const end = f.addDays(wk[wk.length - 1], -7);
   const [arch, fc] = await Promise.all([
-    getJSON(`https://archive-api.open-meteo.com/v1/archive?${q(P)}&start_date=${f.addDays(wk[0], -14)}&end_date=${end}&daily=precipitation_sum&timezone=auto`, { ttl: 24 * 3600e3 }),
+    getJSON(`https://archive-api.open-meteo.com/v1/archive?${q(P)}&start_date=${f.addDays(wk[0], -14)}&end_date=${end}&daily=precipitation_sum&timezone=auto`, { ttl: 7 * 864e5 }),
     getJSON(`https://api.open-meteo.com/v1/forecast?${q(P)}&past_days=7&forecast_days=7&daily=precipitation_sum&timezone=auto`, { ttl: 60 * 60e3 }),
   ]);
   const rain = meanDaily(arch);
@@ -131,15 +133,24 @@ export async function inflowForecast(r, weeks, live) {
   const [, , cap, cur, , , , , , , series] = r;
   const wk = weeks.slice(-series.length);
   const today = f.todayISO();
-  const url = `https://flood-api.open-meteo.com/v1/flood?latitude=${cells.map((c) => c[0]).join(',')}&longitude=${cells.map((c) => c[1]).join(',')}`
-    + `&daily=river_discharge,river_discharge_p25,river_discharge_p75&start_date=${f.addDays(wk[0], -14)}&end_date=${f.addDays(today, 15)}`;
-  const resp = await getJSON(url, { ttl: 3 * 3600e3 });
-  const arr = Array.isArray(resp) ? resp : [resp];
-  // Caudal que entra cada día (m³/s, todos los ríos, con lo de arroyos y laderas) y en hm³/día
-  const days = arr[0].daily.time;
-  const sum = (k, i) => fac * arr.reduce((s, x) => s + (x.daily[k]?.[i] ?? x.daily.river_discharge[i] ?? 0), 0);
+  // Open-Meteo cuenta una consulta por punto y cada 2 semanas de datos: el año de historia (~30 por río) solo cambia
+  // con cada boletín, así que se pide hasta el último y se guarda la semana; a diario solo van las últimas semanas
+  // y la previsión (~2 por río)
+  const wkLast = wk[wk.length - 1];
+  const flood = (vars, from, to, ttl) => getJSON(`https://flood-api.open-meteo.com/v1/flood?latitude=${cells.map((c) => c[0]).join(',')}`
+    + `&longitude=${cells.map((c) => c[1]).join(',')}&daily=${vars}&start_date=${from}&end_date=${to}`, { ttl })
+    .then((x) => (Array.isArray(x) ? x : [x]));
+  const [past, recent] = await Promise.all([
+    flood('river_discharge', f.addDays(wk[0], -14), wkLast, 7 * 864e5),
+    flood('river_discharge,river_discharge_p25,river_discharge_p75', f.addDays(wkLast, -7), f.addDays(today, 15), 3 * 3600e3),
+  ]);
+  // Caudal que entra cada día (m³/s, todos los ríos, con lo de arroyos y laderas); lo reciente manda sobre lo guardado
   const Q = new Map(), Qlo = new Map(), Qhi = new Map();
-  days.forEach((t, i) => { Q.set(t, sum('river_discharge', i)); Qlo.set(t, sum('river_discharge_p25', i)); Qhi.set(t, sum('river_discharge_p75', i)); });
+  for (const arr of [past, recent]) {
+    const sum = (k, i) => fac * arr.reduce((s, x) => s + (x.daily[k]?.[i] ?? x.daily.river_discharge[i] ?? 0), 0);
+    arr[0].daily.time.forEach((t, i) => { Q.set(t, sum('river_discharge', i)); Qlo.set(t, sum('river_discharge_p25', i)); Qhi.set(t, sum('river_discharge_p75', i)); });
+  }
+  const days = [...Q.keys()].sort();
   const HM3 = 86400 / 1e6;
   const inHm3 = (from, to, M = Q) => { let s = 0; for (let d = f.addDays(from, 1); d <= to; d = f.addDays(d, 1)) s += (M.get(d) || 0) * HM3; return s; };
 
@@ -169,7 +180,6 @@ export async function inflowForecast(r, weeks, live) {
   // Punto de partida: el dato en tiempo real si es posterior al boletín (con su capacidad: algunas redes usan otra curva).
   // Ritmo actual: el cambio en 7 días del propio SAIH; si no lo hay, la última semana del boletín. Nunca se resta uno
   // del otro: el boletín redondea a hm³ y algunas redes miden distinto, y la diferencia parecería un ritmo
-  const wkLast = wk[wk.length - 1];
   const liveDay = live && f.isNum(live.vol) && live.t.slice(0, 10) >= wkLast ? live.t.slice(0, 10) : null;
   let base = wkLast, V0 = cur, capV = cap, src = 'boletín', rateLive = false;
   const last = rows[rows.length - 1];

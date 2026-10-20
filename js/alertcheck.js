@@ -157,11 +157,12 @@
   }
 
   // Comprueba y notifica lo que no se haya notificado ya. `reg` es el registro del service worker.
-  async function run(reg, { notify = true } = {}) {
+  // `fetcher`: en la página se pasa el de js/api.js, que lleva la cuenta de la cuota de Open-Meteo
+  async function run(reg, { notify = true, fetcher } = {}) {
     const s = await readStore();
     s.sent ||= {};
     if (!s.alerts?.length) return [];
-    const hits = await evaluate(s.alerts);
+    const hits = await evaluate(s.alerts, fetcher);
     const now = Date.now();
     for (const [k, t] of Object.entries(s.sent)) if (now - t > 4 * 864e5) delete s.sent[k];
     for (const h of hits) {

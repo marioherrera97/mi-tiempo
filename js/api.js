@@ -27,6 +27,52 @@ async function storePut(url, data, t) {
   } catch { /* sin Cache API (navegación privada) */ }
 }
 
+// ---------- Cuota gratuita de Open-Meteo (600 consultas/min, 5.000/h, 10.000/día por IP) ----------
+// Open-Meteo no cuenta peticiones sino consultas: cada punto pedido cuenta una, y más si pide más de 10 variables
+// (proporcional) o más de 2 semanas de datos (proporcional). Se lleva la cuenta en el móvil y, si una petición no
+// cabe en el último minuto, se espera lo justo en vez de lanzarla y recibir «límite alcanzado».
+const LEDGER = 'om:ledger', COOL = 'om:cool';
+const BUDGET_MIN = 520, BUDGET_HOUR = 4600;
+const isOM = (url) => /(^|\.)open-meteo\.com$/.test(new URL(url).hostname);
+export function callWeight(url) {
+  const q = new URL(url).searchParams;
+  const n = (q.get('latitude') || '').split(',').length;
+  const vars = ['hourly', 'daily', 'current', 'minutely_15', 'weekly', 'monthly', 'six_hourly']
+    .reduce((s, k) => s + (q.get(k) || '').split(',').filter(Boolean).length, 0);
+  const s = q.get('start_date'), e = q.get('end_date');
+  const days = s && e ? (Date.parse(e) - Date.parse(s)) / 864e5 + 1 : (+q.get('forecast_days') || 7) + (+q.get('past_days') || 0);
+  return n * Math.max(1, vars / 10) * Math.max(1, days / 14);
+}
+let ledger = load(LEDGER, []);
+const spent = (now, ms) => ledger.reduce((sum, [t, w]) => (now - t < ms ? sum + w : sum), 0);
+// Aviso a la interfaz (app.js) de que se está esperando a que haya cuota
+const waiting = (ms) => globalThis.dispatchEvent?.(new CustomEvent('quota-wait', { detail: ms }));
+const rateError = (msg) => Object.assign(new Error(msg), { fatal: true, rate: true });
+// Las descargas de fondo (normales de 30 años) dejan siempre hueco para lo que se está mirando.
+// Comprobar y apuntar van seguidos, sin esperas entre medias, así que dos peticiones a la vez no se cuelan en el mismo hueco
+async function takeQuota(w, background = false) {
+  const limit = BUDGET_MIN - (background ? 160 : 0);
+  for (;;) {
+    const now = Date.now();
+    ledger = ledger.filter(([t]) => now - t < 3600e3);
+    const cool = load(COOL, 0);
+    if (now < cool) {
+      if (cool - now > 70e3) throw rateError('Límite de Open-Meteo alcanzado. Prueba más tarde.');
+      waiting(cool - now); await sleep(Math.min(cool - now, 3000)); continue;
+    }
+    if (spent(now, 3600e3) + w > BUDGET_HOUR) throw rateError('Límite de peticiones por hora casi agotado. Prueba más tarde.');
+    const m = spent(now, 60e3);
+    if (m === 0 || m + w <= limit) break;
+    // Hay que esperar a que salgan del último minuto las consultas más antiguas
+    let free = m + w - limit, until = now;
+    for (const [t, wt] of ledger) { if (now - t >= 60e3) continue; free -= wt; until = t + 60e3; if (free <= 0) break; }
+    if (!background) waiting(until - now);
+    await sleep(Math.min(until - now + 250, 3000));
+  }
+  ledger.push([Date.now(), Math.round(w * 10) / 10]);
+  save(LEDGER, ledger);
+}
+
 // Peticiones en curso: si dos vistas piden lo mismo a la vez, se descarga una sola vez
 const inflight = new Map();
 export function getJSON(url, opts) {
@@ -51,7 +97,7 @@ function hedgedFetch(url, signal, ms) {
   });
 }
 
-async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0 } = {}) {
+async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0, background = false } = {}) {
   const now = Date.now();
   let hit = mem.get(url);
   if (hit && now - hit.t < ttl && hit.t >= freshAfter) return hit.d;
@@ -63,8 +109,10 @@ async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0 } = 
   if (stored && now - stored.t < ttl && stored.t >= freshAfter) { mem.set(url, stored); return stored.d; }
   hit ||= stored;
   let lastErr;
+  const om = isOM(url);
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      if (om) await takeQuota(callWeight(url), background);
       // Si la red se queda colgada (cobertura móvil mala), se corta y se reintenta
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 25000);
@@ -72,13 +120,14 @@ async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0 } = 
       let data = null;
       try { data = await res.json(); } catch { /* respuesta no JSON */ }
       if (res.status === 429) {
-        // Límite gratuito de Open-Meteo (600/min, 5.000/h, 10.000/día): no insistir
-        const err = new Error(/minut/i.test(data?.reason || '') ? 'Límite de peticiones por minuto alcanzado. Espera un minuto.'
-          : /hour/i.test(data?.reason || '') ? 'Límite de peticiones por hora alcanzado. Prueba más tarde.'
-            : /dail/i.test(data?.reason || '') ? 'Límite diario de peticiones alcanzado. Vuelve mañana.' : 'Demasiadas peticiones. Espera un momento.');
-        err.fatal = true;
-        err.rate = true;
-        throw err;
+        // Límite gratuito de Open-Meteo pese a la cuenta (otras apps en la misma red, o la cuenta se borró):
+        // se para todo un rato. El de minuto se espera y se reintenta solo; el de hora o día no
+        const why = data?.reason || '';
+        const hour = /hour/i.test(why), day = /dail/i.test(why);
+        save(COOL, Date.now() + (day ? 6 * 3600e3 : hour ? 15 * 60e3 : 61e3));
+        if (!hour && !day && attempt < 2) continue;
+        throw rateError(day ? 'Límite diario de peticiones alcanzado. Vuelve mañana.' : hour ? 'Límite de peticiones por hora alcanzado. Prueba más tarde.'
+          : 'Límite de peticiones por minuto alcanzado. Espera un minuto.');
       }
       if (!res.ok || (data && data.error)) {
         const err = new Error((data && data.reason) || `Error HTTP ${res.status}`);

@@ -2,6 +2,7 @@
 // que se comprueban al abrir la app y, donde el navegador lo permite, en segundo plano con el service worker.
 import { state } from '../state.js';
 import * as f from '../format.js';
+import * as api from '../api.js';
 import { toast, selectEl } from '../ui.js';
 
 const A = () => globalThis.MTAlerts;
@@ -29,7 +30,7 @@ export async function checkAlerts(force = false) {
   const s = await A().readStore();
   if (!s.alerts?.length) return [];
   if (!force && s.checked && Date.now() - s.checked < 30 * 60e3) return null;
-  const hits = await A().run(await reg());
+  const hits = await A().run(await reg(), { fetcher: (u) => api.getJSON(u, { ttl: 30 * 60e3 }) });
   // Sin permiso de notificaciones se avisa dentro de la app
   if (hits.length && (!canNotify() || Notification.permission !== 'granted') && !force) toast(`🔔 ${hits[0].title}${hits.length > 1 ? ` y ${hits.length - 1} más` : ''}`, 5000);
   return hits;

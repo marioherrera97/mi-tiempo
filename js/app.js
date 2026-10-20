@@ -163,6 +163,14 @@ function init() {
   window.addEventListener('hashchange', route);
   route();
 
+  // Open-Meteo: si una descarga tiene que esperar a que haya cuota libre (js/api.js), se avisa en vez de fallar
+  let lastWait = 0;
+  window.addEventListener('quota-wait', (e) => {
+    if (e.detail < 1500 || Date.now() - lastWait < 2500) return;
+    lastWait = Date.now();
+    toast(`Esperando a Open-Meteo (límite gratuito)… ${Math.ceil(e.detail / 1000)} s`, 2800);
+  });
+
   const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   if ('serviceWorker' in navigator && (!isLocal || location.search.includes('sw'))) {
     // Cuando se publica una versión nueva, el service worker se activa y la app se recarga sola

@@ -4,6 +4,7 @@ import * as api from '../api.js';
 import * as f from '../format.js';
 import { loading, errorBox, chips, toast } from '../ui.js';
 import { verifyModels, rainYesterday } from '../verify.js';
+import { windModelsCard } from './windmodels.js';
 import { stationName } from './reservoirs.js';
 import { makeChart, baseOptions, theme, PALETTE } from '../charts.js';
 
@@ -55,6 +56,7 @@ export default {
     el.innerHTML = `
       <div class="toolbar" id="cmpVars"></div>
       <div class="toolbar" id="cmpDays"></div>
+      <div class="card" id="cmpWind" hidden></div>
       <div class="card">
         <div class="card-head"><h2 id="cmpTitle"></h2></div>
         <div class="chart-scroll"><div class="chart-box tall" id="cmpBox"><canvas id="cmpChart"></canvas></div></div>
@@ -85,6 +87,12 @@ export default {
     el.querySelector('#cmpTitle').textContent = `${vl} (${unit()})`;
     if (!view.models.length) { el.querySelector('#cmpSum').innerHTML = '<p class="note">Elige al menos un modelo.</p>'; return; }
 
+    // Con viento o rachas, además la rosa y la tabla de viento por modelo (estilo Windy)
+    if (vk.startsWith('wind')) {
+      const wb = el.querySelector('#cmpWind');
+      wb.hidden = false;
+      windModelsCard(wb, state.place, view.models, view.days);
+    }
     const sum = el.querySelector('#cmpSum');
     loading(sum);
     try {

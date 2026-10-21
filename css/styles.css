@@ -749,6 +749,22 @@ select.xsel-native { display: none !important; }
 .view-relief .maplibregl-ctrl-attrib { font-size: 10px; }
 
 /* ¿Qué modelo acierta aquí? (Comparar modelos) */
+/* Viento por modelo (rosa y tabla al estilo Windy) */
+.wm-rose-wrap { display: flex; flex-direction: column; align-items: center; margin: 0 0 12px; }
+.wm-rose { width: 100%; max-width: 340px; height: auto; overflow: visible; }
+.wm-ring { fill: none; stroke: var(--text-3); stroke-width: 1.2; opacity: .6; }
+.wm-ring.thin { stroke-dasharray: 3 4; opacity: .35; }
+.wm-dot { fill: var(--text); stroke: var(--card); stroke-width: 2; }
+.wm-cardinal { fill: var(--text-3); font-size: 12px; font-weight: 650; text-anchor: middle; dominant-baseline: middle; }
+.wm-val { font-size: 10px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+.wm-name { fill: var(--text-2); font-size: 10.5px; font-weight: 650; dominant-baseline: middle; }
+.wm-when { font-size: 13px; font-weight: 600; margin-top: 2px; text-align: center; }
+.wm-table td.wm-col { cursor: pointer; }
+.wm-table td.wm-cell { height: 38px; min-width: 42px; font-weight: 650; line-height: 1.15; }
+.wm-table td.wm-cell small { font-weight: 500; font-size: 10.5px; opacity: .85; }
+.wm-table td.wm-cell .arrow { width: 9px; height: 9px; margin-right: 2px; vertical-align: 0; }
+.wm-table td.wm-sel { box-shadow: inset 0 0 0 2px var(--accent); }
+.wm-table tr.r-hour td.wm-sel { color: var(--accent); font-weight: 700; }
 .vf-best { margin: 0 0 10px; font-size: 14px; }
 .vf-table tr.vf-top td { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .vf-table .vf-use { padding: 3px 10px; font-size: 12px; min-height: 0; }

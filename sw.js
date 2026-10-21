@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión mostrando los últimos datos descargados.
-const VERSION = 'v61';
+const VERSION = 'v62';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v1';
@@ -13,7 +13,7 @@ const SHELL_FILES = [
   'js/charts.js', 'js/ui.js', 'js/select.js', 'js/windlayer.js', 'js/owndata.js', 'js/metno.js', 'js/thumbs.js',
   'js/alertcheck.js', 'js/outdoor.js', 'js/resforecast.js', 'js/normals.js', 'js/rivers.js', 'js/lightning.js', 'js/verify.js',
   'js/views/home.js', 'js/views/hourly.js', 'js/views/map.js', 'js/views/trend.js',
-  'js/views/more.js', 'js/views/compare.js', 'js/views/marine.js', 'js/views/air.js',
+  'js/views/more.js', 'js/views/compare.js', 'js/views/windmodels.js', 'js/views/marine.js', 'js/views/air.js',
   'js/views/history.js', 'js/views/settings.js', 'js/views/mapdetail.js', 'js/views/reservoirs.js',
   'js/views/rainrank.js', 'js/views/activities.js', 'js/views/alerts.js', 'js/views/relief.js',
 ];

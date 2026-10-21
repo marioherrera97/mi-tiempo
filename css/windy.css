@@ -134,10 +134,13 @@ body.map-mode { background: #2b2b2b; }
 .wd-drops { font-size: 10px; opacity: .8; }
 .wd-rain { position: relative; flex: 1; height: 10px; border-radius: 5px; background: #fff; overflow: hidden; }
 .wd-rain i { position: absolute; top: 0; bottom: 0; width: 0.9%; background: #1f8fff; }
-.wd-head { position: relative; flex: none; }
-.wd-15 { position: absolute; right: 0; bottom: 0; z-index: 2; box-shadow: 0 1px 6px rgba(0,0,0,.4); background: var(--w-red); color: #fff; padding: 5px 12px 5px 14px; border-radius: 16px 0 0 16px; font-size: 13px; }
+/* Los botones van en su propia fila bajo la franja de lluvia para no taparla */
+.wd-head { position: relative; flex: none; display: flex; flex-wrap: wrap; align-items: center; padding-bottom: 4px; }
+.wd-head .wd-top { flex: 1 0 100%; min-width: 0; }
+.wd-15 { order: 2; margin-left: auto; z-index: 2; box-shadow: 0 1px 6px rgba(0,0,0,.4); background: var(--w-red); color: #fff; padding: 5px 12px 5px 14px; border-radius: 16px 0 0 16px; font-size: 13px; }
 .wd-body { flex: 0 1 auto; min-height: 0; overflow: auto; background: #f3f3f3; color: #222; }
 .wd-body.dark { background: #2b2b2b; color: #eee; padding: 6px; }
+.wd-wind { margin: 0; background: transparent; box-shadow: none; padding: 6px 4px; }
 .wd-table { position: relative; overflow-x: auto; background: #fff; }
 .wd-curve { position: absolute; z-index: 1; pointer-events: none; mix-blend-mode: multiply; }
 .wd-table td.night { background: #e6ebf2; }
@@ -190,7 +193,7 @@ body.map-mode { background: #2b2b2b; }
 
 /* Comparar previsiones: un bloque por modelo */
 .wdetail.tall { max-height: 92%; }
-.wd-cmp { position: absolute; left: 0; bottom: 0; z-index: 2; box-shadow: 0 1px 6px rgba(0,0,0,.4); background: #505050; color: #fff; padding: 5px 14px 5px 12px; border-radius: 0 16px 16px 0; font-size: 13px; }
+.wd-cmp { order: 1; z-index: 2; box-shadow: 0 1px 6px rgba(0,0,0,.4); background: #505050; color: #fff; padding: 5px 14px 5px 12px; border-radius: 0 16px 16px 0; font-size: 13px; }
 .wdetail.tall .wd-cmp { background: var(--w-red); }
 .cmp-head { background: #3a3a3a; color: #fff; padding: 8px 4px 2px; }
 .cmp-head h3 { margin: 0 8px 2px; font-size: 17px; font-weight: 400; }

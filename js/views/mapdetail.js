@@ -7,8 +7,9 @@ import * as f from '../format.js';
 import { wxIcon } from '../icons.js';
 import { css, textOn } from '../colors.js';
 import { makeChart, baseOptions, theme, alpha, PALETTE } from '../charts.js';
+import { windModelsCard } from './windmodels.js';
 
-const VIEWS = [['basic', 'Básico'], ['meteo', 'Meteograma'], ['waves', 'Olas'], ['models', 'Comparar previsiones']];
+const VIEWS = [['basic', 'Básico'], ['meteo', 'Meteograma'], ['waves', 'Olas'], ['wind', 'Viento'], ['models', 'Comparar previsiones']];
 // Los modelos más conocidos y fiables, cada uno con su bloque al comparar
 const CMP_MODELS = [
   { id: 'ecmwf_ifs', name: 'ECMWF', desc: 'Europa · 9 km · el de referencia' },
@@ -258,6 +259,13 @@ async function waves(body) {
   </table></div>`;
 }
 
+// Viento: rosa con una barra por modelo y tabla de viento y rachas de cada uno, como la pestaña de Windy
+async function wind(body) {
+  body.classList.add('dark');
+  body.innerHTML = '<div class="card wd-wind"></div>';
+  await windModelsCard(body.firstChild, state.place, CMP_MODELS.map((m) => m.id), view.cmpDays);
+}
+
 async function models(body) {
   const hidden = load('cmp.hidden', []), pinned = load('cmp.pinned', []);
   const chips = (key, opts) => `<div class="wd-chips">${opts.map(([v, l]) => `<button class="${view[key] === v ? 'on' : ''}" data-${key}="${v}">${l}</button>`).join('')}</div>`;
@@ -384,7 +392,6 @@ function scrollToNow(body) {
 function trackWindow() {
   const wrap = sheet.querySelector('.wd-table');
   const win = sheet.querySelector('.wd-win');
-  const top = sheet.querySelector('.wd-top');
   const cells = wrap?.querySelectorAll('tr.r-hour td');
   const times = sheet.colTimes;
   if (!wrap || !win || !cells?.length || !times || !sheet.days?.length) { if (win) win.style.display = 'none'; return; }
@@ -400,9 +407,47 @@ function trackWindow() {
   const l = Math.max(0, (ms(times[first]) - t0) / span), r = Math.min(1, (ms(times[lastJ]) + step - t0) / span);
   win.style.left = (l * 100).toFixed(2) + '%';
   win.style.width = (Math.max(0.01, r - l) * 100).toFixed(2) + '%';
-  // Que el recuadro no se salga de la vista de días
-  const x = win.parentElement.offsetLeft + win.offsetLeft, w = win.offsetWidth;
-  if (x < top.scrollLeft || x + w > top.scrollLeft + top.clientWidth) top.scrollLeft = Math.max(0, x - 20);
+}
+
+// La franja de días y la tabla se desplazan juntas: lo que queda en el borde izquierdo de una
+// (en fracción de los días mostrados) se lleva al borde izquierdo de la otra
+function syncScroll() {
+  const wrap = sheet.querySelector('.wd-table');
+  const top = sheet.querySelector('.wd-top');
+  const strip = top?.querySelector('.wd-days');
+  const times = sheet.colTimes;
+  if (!wrap || !strip || !times?.length || !sheet.days?.length) return;
+  const ms = (t) => Date.parse(t + ':00Z');
+  const t0 = ms(sheet.days[0] + 'T00:00'), span = sheet.days.length * 24 * 3600e3;
+  const cols = () => [...wrap.querySelectorAll('tr.r-hour td')];
+  const labW = () => wrap.querySelector('th.rowlab')?.offsetWidth || 0;
+  // Mueve `el` sin que su propio evento de scroll vuelva a mover a la otra
+  const set = (el, x) => {
+    const v = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, Math.round(x)));
+    if (Math.abs(el.scrollLeft - v) < 1) return;
+    el._expect = v;
+    el.scrollLeft = v;
+  };
+  const ours = (el) => { if (el._expect === undefined) return false; const hit = Math.abs(el.scrollLeft - el._expect) < 2; el._expect = undefined; return hit; };
+  wrap.addEventListener('scroll', () => {
+    if (ours(wrap)) return;
+    const c = cols(), x = wrap.scrollLeft + labW();
+    let j = c.findIndex((td) => td.offsetLeft + td.offsetWidth > x);
+    if (j < 0) j = c.length - 1;
+    const step = times[j + 1] ? ms(times[j + 1]) - ms(times[j]) : 3600e3;
+    const t = ms(times[j]) + Math.max(0, Math.min(1, (x - c[j].offsetLeft) / c[j].offsetWidth)) * step;
+    set(top, strip.offsetLeft + ((t - t0) / span) * strip.offsetWidth);
+  }, { passive: true });
+  top.onscroll = () => {
+    if (ours(top)) return;
+    const t = t0 + ((top.scrollLeft - strip.offsetLeft) / strip.offsetWidth) * span;
+    const c = cols();
+    let j = times.findIndex((s, k) => ms(s) <= t && (!times[k + 1] || ms(times[k + 1]) > t));
+    if (j < 0) j = ms(times[0]) > t ? 0 : c.length - 1;
+    const step = times[j + 1] ? ms(times[j + 1]) - ms(times[j]) : 3600e3;
+    const frac = Math.max(0, Math.min(1, (t - ms(times[j])) / step));
+    set(wrap, c[j].offsetLeft + frac * c[j].offsetWidth - labW());
+  };
 }
 
 function goDay(body, day) {
@@ -412,13 +457,13 @@ function goDay(body, day) {
   if (td) wrap.scrollLeft = Math.max(0, td.offsetLeft - (lab?.offsetWidth || 0));
 }
 
-const RENDER = { basic, meteo, waves, models };
+const RENDER = { basic, meteo, waves, wind, models };
 
 async function renderAll() {
   const top = sheet.querySelector('.wd-top');
   const body = sheet.querySelector('.wd-body');
   body.classList.remove('dark');
-  sheet.classList.toggle('tall', view.tab === 'models');
+  sheet.classList.toggle('tall', view.tab === 'models' || view.tab === 'wind');
   sheet.querySelector('[data-view]').value = view.tab;
   sheet.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === view.tab));
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
@@ -443,8 +488,9 @@ async function renderAll() {
       });
       sheet.colTimes = times;
       wrap.addEventListener('scroll', trackWindow, { passive: true });
-    }
+    } else top.onscroll = null;
     trackWindow();
+    syncScroll();
   } catch (e) {
     body.innerHTML = `<p class="wd-note">${f.esc(e.message)}</p>`;
   }

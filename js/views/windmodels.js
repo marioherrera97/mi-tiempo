@@ -8,73 +8,45 @@ const STEP = 3;
 const short = (id) => api.MODELS.find((x) => x.id === id)?.short || id;
 
 // Series de cada modelo (con un solo modelo la API no añade el sufijo _modelo)
-function series(h, models) {
+export function series(h, models) {
   const get = (v, m) => h[models.length === 1 && h[v] ? v : `${v}_${m}`] || [];
   return models.map((m) => ({ id: m, ws: get('wind_speed_10m', m), wd: get('wind_direction_10m', m), wg: get('wind_gusts_10m', m) }));
 }
 
-// Reparte ángulos ordenados para que entre dos haya al menos `gap` grados: los que quedan juntos forman
-// un grupo, centrado en su media, con sus barras a `gap` grados unas de otras
-function spread(items, gap) {
-  if (items.length < 2) return;
-  // Empieza justo después del mayor hueco para no partir un grupo que cruce el norte
-  let cut = 0, best = -1;
-  items.forEach((p, k) => {
-    const q = items[(k + 1) % items.length];
-    const g = (q.a - p.a + 360) % 360;
-    if (g > best) { best = g; cut = (k + 1) % items.length; }
-  });
-  const seq = [...items.slice(cut), ...items.slice(0, cut)];
-  seq.forEach((p, k) => { if (k && p.a < seq[k - 1].a) p.a += 360; });
-  let groups = seq.map((p) => ({ c: p.a, m: [p] }));
-  for (let merged = true; merged;) {
-    merged = false;
-    for (let k = 0; k + 1 < groups.length; k++) {
-      const g = groups[k], h = groups[k + 1];
-      const gEnd = g.c + ((g.m.length - 1) * gap) / 2, hStart = h.c - ((h.m.length - 1) * gap) / 2;
-      if (hStart - gEnd < gap) {
-        const m = [...g.m, ...h.m];
-        groups.splice(k, 2, { c: (g.c * g.m.length + h.c * h.m.length) / m.length, m });
-        merged = true;
-        break;
-      }
-    }
-  }
-  groups.forEach((g) => g.m.forEach((p, k) => { p.a = g.c + (k - (g.m.length - 1) / 2) * gap; }));
+// Rosa de Windy: una barra por modelo que sale del centro hacia donde viene el viento, con el largo y el
+// color de su fuerza. Cada barra va en su dirección exacta: si dos modelos coinciden, se solapan.
+// `max` fija la escala (km/h en el borde del círculo); por defecto, la del modelo más fuerte
+export function roseSVG(rows, i, { size = 340, cls = 'wm-rose', max, fill = (v) => css('wind', v), ink = (v) => textOn('wind', v) } = {}) {
+  const c = size / 2, R = size * 0.37, R0 = size * 0.03;
+  const vals = rows.map((r) => r.ws[i]).filter(f.isNum);
+  const top = max || Math.max(20, ...vals) * 1.1;
+  const ticks = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([t, a]) => {
+    const r = (a * Math.PI) / 180, x = c + Math.sin(r) * (R + 14), y = c - Math.cos(r) * (R + 14);
+    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="wm-cardinal">${t}</text>`;
+  }).join('');
+  const bars = rows.filter((r) => f.isNum(r.ws[i]) && f.isNum(r.wd[i])).map((r) => {
+    const v = r.ws[i], d = r.wd[i], g = r.wg[i];
+    const len = Math.max(size * 0.06, Math.min(1.08, v / top) * (R - R0));
+    const txt = `${f.wind(v)}${f.isNum(g) ? ` G:${f.wind(g)}` : ''}`;
+    const flip = d > 0 && d < 180; // texto siempre legible de izquierda a derecha
+    const inside = len > txt.length * 5.6 + 6; // si no cabe en la barra, va tras el nombre
+    return `<g transform="rotate(${(d - 180).toFixed(1)} ${c} ${c})">
+      <title>${f.esc(api.modelName(r.id))}: ${f.wind(v, true)} del ${f.dirName(d)} (${Math.round(d)}°)${f.isNum(g) ? `, rachas ${f.wind(g, true)}` : ''}</title>
+      <rect x="${c - 7}" y="${c + R0}" width="14" height="${len.toFixed(1)}" rx="2" fill="${fill(v)}" class="wm-bar"/>
+      <text class="wm-val" fill="${ink(v)}" transform="translate(${c} ${(c + R0 + len / 2).toFixed(1)}) rotate(${flip ? 90 : -90})">${inside ? txt : ''}</text>
+      <text class="wm-name" transform="translate(${c} ${(c + R0 + len + 5).toFixed(1)}) rotate(${flip ? 90 : -90})" text-anchor="${flip ? 'start' : 'end'}">${f.esc(short(r.id))}${inside ? '' : ` ${txt}`}</text>
+    </g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" class="${cls}" role="img" aria-label="Viento por modelo">
+    <circle cx="${c}" cy="${c}" r="${R}" class="wm-ring"/>
+    ${ticks}${bars}<circle cx="${c}" cy="${c}" r="5" class="wm-dot"/>
+    <text x="${c}" y="${(c + R + 30).toFixed(1)}" class="wm-unit">${f.windUnit()}</text>
+  </svg>`;
 }
 
 function rose(rows, i, time) {
-  const S = 340, c = S / 2, R = 128;
-  const vals = rows.map((r) => r.ws[i]).filter(f.isNum);
-  // Escala: la barra más fuerte llega casi al círculo; mínimo 20 km/h para que la calma se vea corta
-  const max = Math.max(20, ...vals) * 1.1;
-  const ticks = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([t, a]) => {
-    const r = (a * Math.PI) / 180, x = c + Math.sin(r) * (R + 16), y = c - Math.cos(r) * (R + 16);
-    return `<text x="${x}" y="${y}" class="wm-cardinal">${t}</text>`;
-  }).join('');
-  // Los modelos que coinciden en dirección se separan un poco al dibujarlos para que no se tapen
-  // (la dirección exacta queda en el título de cada barra)
-  const items = rows.filter((r) => f.isNum(r.ws[i]) && f.isNum(r.wd[i])).map((r) => ({ r, a: r.wd[i] })).sort((p, q) => p.a - q.a);
-  spread(items, 16);
-  const bars = items.map(({ r, a }) => {
-    const v = r.ws[i], d = ((a % 360) + 360) % 360;
-    const R0 = 34, len = Math.max(18, (v / max) * (R - R0)); // las barras arrancan algo fuera del centro
-    // La barra apunta hacia donde viene el viento (como la veleta de Windy)
-    const rot = d - 180;
-    const txt = `${f.wind(v)}${f.isNum(r.wg[i]) ? `·${f.wind(r.wg[i])}` : ''}`;
-    const flip = d > 0 && d < 180; // texto siempre legible de izquierda a derecha
-    return `<g transform="rotate(${rot.toFixed(1)} ${c} ${c})">
-      <title>${f.esc(api.modelName(r.id))}: ${f.wind(v, true)} del ${f.dirName(r.wd[i])}${f.isNum(r.wg[i]) ? `, rachas ${f.wind(r.wg[i], true)}` : ''}</title>
-      <rect x="${c - 6}" y="${c + R0}" width="12" height="${len.toFixed(1)}" rx="3" fill="${css('wind', v)}" stroke="rgba(0,0,0,.25)"/>
-      <text class="wm-val" fill="${textOn('wind', v)}" transform="translate(${c} ${c + R0 + len / 2}) rotate(${flip ? 90 : -90})">${len > txt.length * 6 + 6 ? txt : ''}</text>
-      <text class="wm-name" transform="translate(${c} ${c + R0 + len + 6}) rotate(${flip ? 90 : -90})" text-anchor="${flip ? 'start' : 'end'}">${f.esc(short(r.id))}</text>
-    </g>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${S} ${S}" class="wm-rose" role="img" aria-label="Viento por modelo">
-    <circle cx="${c}" cy="${c}" r="${R}" class="wm-ring"/><circle cx="${c}" cy="${c}" r="${R / 2}" class="wm-ring thin"/>
-    ${ticks}${bars}<circle cx="${c}" cy="${c}" r="5" class="wm-dot"/>
-  </svg>
-  <div class="wm-when">${f.dayShort(time)} · ${f.hhmm(time)} <span class="tiny">(${f.windUnit()} · medio·racha, escala hasta ${f.wind(max, true)})</span></div>`;
+  return `${roseSVG(rows, i)}
+  <div class="wm-when">${f.dayShort(time)} · ${f.hhmm(time)} <span class="tiny">(${f.windUnit()} · medio y racha G)</span></div>`;
 }
 
 function table(rows, h, idx, sel, nowI) {

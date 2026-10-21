@@ -7,7 +7,7 @@ import * as f from '../format.js';
 import { wxIcon } from '../icons.js';
 import { css, textOn } from '../colors.js';
 import { makeChart, baseOptions, theme, alpha, PALETTE } from '../charts.js';
-import { windModelsCard } from './windmodels.js';
+import { roseSVG, series } from './windmodels.js';
 
 const VIEWS = [['basic', 'Básico'], ['meteo', 'Meteograma'], ['waves', 'Olas'], ['wind', 'Viento'], ['models', 'Comparar previsiones']];
 // Los modelos más conocidos y fiables, cada uno con su bloque al comparar
@@ -32,14 +32,16 @@ const DIAS = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', '
 
 // Colores de la fila de rachas de la tabla de Windy (más vivos que los del mapa)
 const GUST = [[0, [255, 255, 255]], [5, [222, 246, 251]], [10, [160, 233, 244]], [15, [52, 218, 238]], [19, [34, 224, 180]], [22, [43, 220, 53]], [30, [95, 211, 26]], [40, [232, 229, 26]], [55, [245, 163, 26]], [70, [239, 59, 44]], [90, [194, 24, 91]]];
-function gustCell(kmh) {
-  if (!f.isNum(kmh)) return cell('–');
+function gustRGB(kmh) {
   let k = 1;
   while (k < GUST.length - 1 && GUST[k][0] < kmh) k++;
   const [a, ca] = GUST[k - 1], [b, cb] = GUST[k];
   const t = Math.max(0, Math.min(1, (kmh - a) / (b - a)));
-  const c = ca.map((v, i) => Math.round(v + (cb[i] - v) * t));
-  return cell(f.wind(kmh), `background:rgb(${c.join(',')});color:${kmh >= 70 ? '#fff' : '#111'}`, 'gust');
+  return `rgb(${ca.map((v, i) => Math.round(v + (cb[i] - v) * t)).join(',')})`;
+}
+function gustCell(kmh) {
+  if (!f.isNum(kmh)) return cell('–');
+  return cell(f.wind(kmh), `background:${gustRGB(kmh)};color:${kmh >= 70 ? '#fff' : '#111'}`, 'gust');
 }
 const cell = (txt, style = '', cls = '') => `<td${cls ? ` class="${cls}"` : ''}${style ? ` style="${style}"` : ''}>${txt}</td>`;
 const colored = (scale, v, txt, mul = 1) => (f.isNum(v) ? cell(txt, `background:${css(scale, v, mul)};color:${textOn(scale, v, mul)}`, 'cval') : cell('–'));
@@ -166,7 +168,13 @@ async function basic(body, d) {
 
 // Línea roja discontinua en la columna de la hora que muestra el mapa
 let mapMs = null;
-window.addEventListener('map-time', (e) => { mapMs = e.detail; markMapTime(); });
+window.addEventListener('map-time', (e) => {
+  mapMs = e.detail;
+  // La hora tocada en la tabla de viento se mantiene mientras el mapa siga en su tramo de 3 h
+  if (roseMs !== null && Math.abs(mapMs - roseMs) > 3 * 3600e3) roseMs = null;
+  markMapTime();
+  if (rose && view.tab === 'wind') drawRose();
+});
 function markMapTime() {
   const wrap = sheet?.querySelector('.wd-table');
   if (!wrap || !sheet.colMs || mapMs === null) return;
@@ -259,11 +267,63 @@ async function waves(body) {
   </table></div>`;
 }
 
-// Viento: rosa con una barra por modelo y tabla de viento y rachas de cada uno, como la pestaña de Windy
+// Viento, como la pestaña de Windy: una fila por modelo con dirección, viento medio y racha, y la rosa de los
+// modelos dibujada sobre el punto del mapa a la hora que marca la línea de tiempo
+const WIND_VARS = ['wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
+let rose = null; // { rows, ms } del punto abierto
+let roseMs = null; // hora tocada en la tabla (el mapa va de 3 en 3 h y puede quedarse a una hora de ella)
+let roseHost = null;
+export function setRoseHost(fn) { roseHost = fn; }
+function drawRose() {
+  if (!roseHost) return;
+  if (!rose || !sheet?.classList.contains('open') || view.tab !== 'wind') { roseHost(null); return; }
+  const t = roseMs ?? mapMs ?? Date.now();
+  // La hora del modelo más cercana a la del mapa
+  let i = 0;
+  rose.ms.forEach((m, k) => { if (Math.abs(m - t) < Math.abs(rose.ms[i] - t)) i = k; });
+  // Barras con los colores vivos de la tabla, que destacan sobre los del mapa
+  roseHost(roseSVG(rose.rows, i, { size: ROSE_SIZE(), cls: 'map-rose', fill: (v) => gustRGB(Math.max(8, v)), ink: (v) => (v >= 70 ? '#fff' : '#111') }));
+}
+export const ROSE_SIZE = () => (window.innerWidth < 600 ? 250 : 300);
+
 async function wind(body) {
-  body.classList.add('dark');
-  body.innerHTML = '<div class="card wd-wind"></div>';
-  await windModelsCard(body.firstChild, state.place, CMP_MODELS.map((m) => m.id), view.cmpDays);
+  const d = await api.compareModels(state.place, CMP_MODELS.map((m) => m.id), WIND_VARS);
+  const h = d.hourly;
+  const rows = series(h, CMP_MODELS.map((m) => m.id));
+  const off = (d.utc_offset_seconds || 0) * 1000;
+  rose = { rows, ms: h.time.map((t) => Date.parse(t + ':00Z') - off) };
+  const nowKey = f.placeNow(d.utc_offset_seconds).slice(0, 13);
+  // Desde el principio de hoy, como la pestaña Básico, y hasta donde llegue algún modelo
+  const idx = hourIdx(h.time, nowKey.slice(0, 10) + 'T00', view.step, h.time.length).filter((i) => rows.some((r) => f.isNum(r.ws[i])));
+  let nowJ = idx.findIndex((i) => h.time[i].slice(0, 13) >= nowKey);
+  if (view.step === 3 && nowJ > 0 && h.time[idx[nowJ]].slice(0, 13) > nowKey) nowJ--;
+  const { html, isStart } = headRows(h.time, idx);
+  const name = (id) => CMP_MODELS.find((m) => m.id === id).name;
+  const windCell = (r) => (i) => {
+    const v = r.ws[i], g = r.wg[i];
+    if (!f.isNum(v)) return cell('', '', 'wcell empty');
+    // Fondo con la racha (como los colores de la fila de rachas de Windy)
+    const k = f.isNum(g) ? g : v, bg = `background:${gustRGB(k)};color:${k >= 70 ? '#fff' : '#111'}`;
+    return cell(`<b>${f.arrow(r.wd[i])}${f.wind(v)}</b><small>${f.isNum(g) ? f.wind(g) : ''}</small>`, bg, 'wcell');
+  };
+  body.innerHTML = `<div class="wd-table wd-windt"><table>${html}
+    ${rows.map((r) => rowHtml(`${name(r.id)} <small>${f.windUnit()}</small>`, idx, isStart, windCell(r), nowJ)).join('')}
+  </table></div>
+  <p class="wd-note">Arriba el viento medio a 10 m con su dirección y abajo las rachas. En el mapa, cada barra sale del punto hacia donde viene el viento según cada modelo, con su largo y color según la fuerza (G = racha). Toca una hora para verla en el mapa.</p>`;
+  scrollToNow(body);
+  sheet.colMs = idx.map((i) => rose.ms[i]);
+  sheet.colSpan = view.step * 3600e3;
+  body.querySelector('table').addEventListener('click', (e) => {
+    const td = e.target.closest('td');
+    if (!td || td.parentElement.classList.contains('r-day')) return;
+    const j = td.cellIndex - 1;
+    if (j < 0 || !sheet.colMs[j]) return;
+    roseMs = sheet.colMs[j];
+    window.dispatchEvent(new CustomEvent('wd-pick-time', { detail: roseMs }));
+    drawRose();
+  });
+  markMapTime();
+  drawRose();
 }
 
 async function models(body) {
@@ -463,7 +523,10 @@ async function renderAll() {
   const top = sheet.querySelector('.wd-top');
   const body = sheet.querySelector('.wd-body');
   body.classList.remove('dark');
-  sheet.classList.toggle('tall', view.tab === 'models' || view.tab === 'wind');
+  sheet.classList.toggle('tall', view.tab === 'models');
+  rose = null;
+  roseMs = null;
+  drawRose();
   sheet.querySelector('[data-view]').value = view.tab;
   sheet.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === view.tab));
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Cargando…</div>';
@@ -527,6 +590,9 @@ export function openDetail(root) {
 
 export function closeDetail() {
   sheet?.classList.remove('open');
+  rose = null;
+  roseMs = null;
+  drawRose();
   sheet?.parentElement?.classList.remove('detail-open');
 }
 export const detailOpen = () => !!sheet?.classList.contains('open');

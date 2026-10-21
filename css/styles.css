@@ -753,7 +753,8 @@ select.xsel-native { display: none !important; }
 .wm-rose-wrap { display: flex; flex-direction: column; align-items: center; margin: 0 0 12px; }
 .wm-rose { width: 100%; max-width: 340px; height: auto; overflow: visible; }
 .wm-ring { fill: none; stroke: var(--text-3); stroke-width: 1.2; opacity: .6; }
-.wm-ring.thin { stroke-dasharray: 3 4; opacity: .35; }
+.wm-bar { stroke: rgba(0,0,0,.3); stroke-width: .8; }
+.wm-unit { fill: var(--text-3); font-size: 12px; text-anchor: middle; dominant-baseline: middle; }
 .wm-dot { fill: var(--text); stroke: var(--card); stroke-width: 2; }
 .wm-cardinal { fill: var(--text-3); font-size: 12px; font-weight: 650; text-anchor: middle; dominant-baseline: middle; }
 .wm-val { font-size: 10px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }

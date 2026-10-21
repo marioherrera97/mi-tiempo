@@ -7,7 +7,7 @@ import * as f from '../format.js';
 import { gradientCSS, colorAt } from '../colors.js';
 import { FieldLayer, emptyGrid, mergePoints, addFlow, addAccum, fillGaps } from '../windlayer.js';
 import { toast, debounce } from '../ui.js';
-import { openDetail, closeDetail, detailOpen } from './mapdetail.js';
+import { openDetail, closeDetail, detailOpen, setRoseHost, ROSE_SIZE } from './mapdetail.js';
 import * as rv from './reservoirs.js';
 import * as rivers from '../rivers.js';
 import * as bolt from '../lightning.js';
@@ -888,6 +888,25 @@ function setTime(i, frac = 0) {
   placeBubble();
 }
 
+// Rosa de los modelos sobre el punto (pestaña Viento del panel, como Windy); null la quita
+function showRose(svg) {
+  if (!S.map) return;
+  if (!svg) { S.rose?.remove(); S.rose = null; return; }
+  const ll = [state.place.lat, state.place.lon];
+  if (S.rose) { S.rose.setLatLng(ll); S.rose.getElement().innerHTML = svg; return; }
+  const n = ROSE_SIZE();
+  S.rose = L.marker(ll, { interactive: false, keyboard: false, zIndexOffset: -1000, icon: L.divIcon({ className: 'map-rose-ico', html: svg, iconSize: [n, n], iconAnchor: [n / 2, n / 2] }) }).addTo(S.map);
+  // Que la rosa quede a la vista entre la barra de arriba y el panel
+  const box = S.map.getContainer().getBoundingClientRect();
+  const topH = document.querySelector('.view-map .w-top')?.getBoundingClientRect().bottom - box.top || 0;
+  const panel = document.querySelector('.wdetail.open');
+  const bottom = panel ? panel.getBoundingClientRect().top - box.top : box.height;
+  const p = S.map.latLngToContainerPoint(ll);
+  if (p.y - n / 2 < topH || p.y + n / 2 > bottom || p.x < n / 2 || p.x > box.width - n / 2) {
+    S.map.panBy([p.x - box.width / 2, p.y - (topH + bottom) / 2], { animate: true });
+  }
+}
+
 // Burbuja naranja con la hora y línea vertical sobre los días, como en Windy
 function placeBubble(scroll = true) {
   const r = el('mapRange'), b = el('tlBubble'), line = el('tlLine');
@@ -1509,6 +1528,7 @@ export default {
       S.marker = L.marker([state.place.lat, state.place.lon], { draggable: true, autoPan: true, icon: L.divIcon({ className: '', html: '<div class="pin"></div><div class="pin-val hidden"></div>', iconSize: [16, 16] }) }).addTo(map);
       S.marker.on('drag', () => { S.pick = S.marker.getLatLng(); updatePicker(); });
       S.marker.on('dragend', () => pickAt(S.marker.getLatLng()));
+      setRoseHost(showRose);
       // Créditos del mapa plegados en una «i» para que no tapen la hora
       const attr = map.attributionControl.getContainer();
       attr.classList.add('folded');

@@ -27,6 +27,10 @@
 43.2361,
 -6.8478
 ],
+"Cantábrico Occidental|Somiedo (Lagos)": [
+43.1173,
+-6.2522
+],
 "Cantábrico Occidental|Tanes": [
 43.2067,
 -5.405
@@ -86,6 +90,14 @@
 "Cuencas Internas de Cataluña|Boadella": [
 42.3408,
 2.8333
+],
+"Cuencas Internas de Cataluña|Catllar": [
+41.1959,
+1.3276
+],
+"Cuencas Internas de Cataluña|Foix": [
+41.2556,
+1.6512
 ],
 "Cuencas Internas de Cataluña|La Baells": [
 42.1219,
@@ -259,6 +271,10 @@
 42.588,
 0.7604
 ],
+"Ebro|Bramatuero Alto": [
+42.7839,
+-0.1953
+],
 "Ebro|Búbal": [
 42.6908,
 -0.3147
@@ -306,6 +322,10 @@
 "Ebro|Escales": [
 42.3397,
 0.7463
+],
+"Ebro|Escarra": [
+42.743,
+-0.3573
 ],
 "Ebro|Eúgui": [
 42.9758,
@@ -398,6 +418,10 @@
 "Ebro|Peña, La": [
 40.8167,
 0.1333
+],
+"Ebro|Respomuso": [
+42.8133,
+-0.2897
 ],
 "Ebro|Rialb": [
 41.9404,
@@ -543,6 +567,10 @@
 38.0446,
 -2.9511
 ],
+"Guadalquivir|Alcalá del Río": [
+37.5195,
+-5.9723
+],
 "Guadalquivir|Aracena": [
 37.9092,
 -6.45
@@ -563,6 +591,10 @@
 37.7704,
 -2.9006
 ],
+"Guadalquivir|Breña, La": [
+37.8363,
+-5.0473
+],
 "Guadalquivir|Cala": [
 37.7125,
 -6.1075
@@ -571,17 +603,33 @@
 37.1592,
 -3.4794
 ],
+"Guadalquivir|Cantillana": [
+37.6121,
+-5.7902
+],
 "Guadalquivir|Colomera": [
 37.4035,
 -3.7209
+],
+"Guadalquivir|Cordobilla": [
+37.3517,
+-4.7226
 ],
 "Guadalquivir|Cubillas": [
 37.2759,
 -3.6722
 ],
+"Guadalquivir|Doña Aldonza": [
+37.9379,
+-3.2963
+],
 "Guadalquivir|El Portillo": [
 37.8058,
 -2.7889
+],
+"Guadalquivir|Encinarejo": [
+38.1653,
+-3.9917
 ],
 "Guadalquivir|Fernandina, La": [
 38.1797,
@@ -631,6 +679,10 @@
 38.237,
 -3.955
 ],
+"Guadalquivir|Malpasillo ( Jauja )": [
+37.2866,
+-4.6723
+],
 "Guadalquivir|Martín Gonzalo": [
 38.0981,
 -4.3344
@@ -650,6 +702,10 @@
 "Guadalquivir|Negratín": [
 37.5696,
 -2.907
+],
+"Guadalquivir|Pedro Marín": [
+37.9123,
+-3.3793
 ],
 "Guadalquivir|Pintado, El": [
 38.0,
@@ -738,6 +794,10 @@
 "Guadiana|Cancho del Fresno": [
 39.3933,
 -5.3901
+],
+"Guadiana|Castilseras": [
+38.7436,
+-4.7887
 ],
 "Guadiana|Chanza": [
 37.5586,

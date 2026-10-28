@@ -37,7 +37,9 @@ const isOM = (url) => /(^|\.)open-meteo\.com$/.test(new URL(url).hostname);
 export function callWeight(url) {
   const q = new URL(url).searchParams;
   const n = (q.get('latitude') || '').split(',').length;
-  const vars = ['hourly', 'daily', 'current', 'minutely_15', 'weekly', 'monthly', 'six_hourly']
+  // Con varios modelos, cada variable cuenta una vez por modelo
+  const models = Math.max(1, (q.get('models') || '').split(',').filter(Boolean).length);
+  const vars = models * ['hourly', 'daily', 'current', 'minutely_15', 'weekly', 'monthly', 'six_hourly']
     .reduce((s, k) => s + (q.get(k) || '').split(',').filter(Boolean).length, 0);
   const s = q.get('start_date'), e = q.get('end_date');
   const days = s && e ? (Date.parse(e) - Date.parse(s)) / 864e5 + 1 : (+q.get('forecast_days') || 7) + (+q.get('past_days') || 0);
@@ -48,16 +50,18 @@ const spent = (now, ms) => ledger.reduce((sum, [t, w]) => (now - t < ms ? sum + 
 // Aviso a la interfaz (app.js) de que se está esperando a que haya cuota
 const waiting = (ms) => globalThis.dispatchEvent?.(new CustomEvent('quota-wait', { detail: ms }));
 const rateError = (msg) => Object.assign(new Error(msg), { fatal: true, rate: true });
+const spend = (w) => { ledger.push([Date.now(), Math.round(w * 10) / 10]); save(LEDGER, ledger); };
 // Las descargas de fondo (normales de 30 años) dejan siempre hueco para lo que se está mirando.
-// Comprobar y apuntar van seguidos, sin esperas entre medias, así que dos peticiones a la vez no se cuelan en el mismo hueco
-async function takeQuota(w, background = false) {
+// Comprobar y apuntar van seguidos, sin esperas entre medias, así que dos peticiones a la vez no se cuelan en el mismo hueco.
+// Si ya hay una copia guardada (`hasCopy`), no se hace esperar a nadie: se enseña esa y se actualiza en otro momento
+async function takeQuota(w, background = false, hasCopy = false) {
   const limit = BUDGET_MIN - (background ? 160 : 0);
   for (;;) {
     const now = Date.now();
     ledger = ledger.filter(([t]) => now - t < 3600e3);
     const cool = load(COOL, 0);
     if (now < cool) {
-      if (cool - now > 70e3) throw rateError('Límite de Open-Meteo alcanzado. Prueba más tarde.');
+      if (hasCopy || cool - now > 70e3) throw rateError('Límite de Open-Meteo alcanzado. Prueba más tarde.');
       waiting(cool - now); await sleep(Math.min(cool - now, 3000)); continue;
     }
     if (spent(now, 3600e3) + w > BUDGET_HOUR) throw rateError('Límite de peticiones por hora casi agotado. Prueba más tarde.');
@@ -66,11 +70,11 @@ async function takeQuota(w, background = false) {
     // Hay que esperar a que salgan del último minuto las consultas más antiguas
     let free = m + w - limit, until = now;
     for (const [t, wt] of ledger) { if (now - t >= 60e3) continue; free -= wt; until = t + 60e3; if (free <= 0) break; }
+    if (hasCopy && until - now > 3000) throw rateError('Límite de Open-Meteo alcanzado. Prueba más tarde.');
     if (!background) waiting(until - now);
     await sleep(Math.min(until - now + 250, 3000));
   }
-  ledger.push([Date.now(), Math.round(w * 10) / 10]);
-  save(LEDGER, ledger);
+  spend(w);
 }
 
 // Peticiones en curso: si dos vistas piden lo mismo a la vez, se descarga una sola vez
@@ -81,7 +85,8 @@ export function getJSON(url, opts) {
 }
 // Open-Meteo a veces tarda varios segundos en contestar una petición que suele tardar 0,1 s:
 // si no ha respondido en `ms`, se lanza otra igual y se usa la que llegue antes
-function hedgedFetch(url, signal, ms) {
+// (Open-Meteo cuenta las dos, así que la segunda también se apunta en `onHedge`)
+function hedgedFetch(url, signal, ms, onHedge) {
   const ctls = [];
   const go = () => {
     const c = new AbortController();
@@ -92,7 +97,7 @@ function hedgedFetch(url, signal, ms) {
   return new Promise((resolve, reject) => {
     let pending = 1;
     const fail = (e) => { if (--pending === 0) reject(e); };
-    const timer = setTimeout(() => { pending++; go().then(resolve, fail); }, ms);
+    const timer = setTimeout(() => { pending++; onHedge?.(); go().then(resolve, fail); }, ms);
     go().then(resolve, fail).finally(() => clearTimeout(timer));
   });
 }
@@ -112,21 +117,26 @@ async function fetchJSON(url, { ttl = 10 * 60e3, persist = false, hedge = 0, bac
   const om = isOM(url);
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      if (om) await takeQuota(callWeight(url), background);
+      if (om) await takeQuota(callWeight(url), background, !!hit);
       // Si la red se queda colgada (cobertura móvil mala), se corta y se reintenta
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 25000);
-      const res = await (hedge ? hedgedFetch(url, ctl.signal, hedge) : fetch(url, { signal: ctl.signal })).finally(() => clearTimeout(timer));
+      const res = await (hedge ? hedgedFetch(url, ctl.signal, hedge, om ? () => spend(callWeight(url)) : null) : fetch(url, { signal: ctl.signal })).finally(() => clearTimeout(timer));
       let data = null;
       try { data = await res.json(); } catch { /* respuesta no JSON */ }
       if (res.status === 429) {
         // Límite gratuito de Open-Meteo pese a la cuenta (otras apps en la misma red, o la cuenta se borró):
-        // se para todo un rato. El de minuto se espera y se reintenta solo; el de hora o día no
+        // se para todo un rato. El de minuto se espera y se reintenta solo, pero solo una vez y si no hay copia guardada
+        // (si justo después de esperar vuelve a dar 429, la red está saturada por otros: se para 10 min en vez de
+        // esperar minuto tras minuto); el de hora o día no
         const why = data?.reason || '';
         const hour = /hour/i.test(why), day = /dail/i.test(why);
-        save(COOL, Date.now() + (day ? 6 * 3600e3 : hour ? 15 * 60e3 : 61e3));
-        if (!hour && !day && attempt < 2) continue;
+        // (otra petición de la misma tanda puede haber puesto ya la pausa: esa no cuenta, y una pausa nunca se acorta)
+        const t = Date.now(), prev = load(COOL, 0), again = !hour && !day && prev < t + 55e3 && t - prev < 90e3;
+        save(COOL, Math.max(prev, t + (day ? 6 * 3600e3 : hour ? 15 * 60e3 : again ? 10 * 60e3 : 61e3)));
+        if (!hour && !day && !again && !hit && attempt < 2) continue;
         throw rateError(day ? 'Límite diario de peticiones alcanzado. Vuelve mañana.' : hour ? 'Límite de peticiones por hora alcanzado. Prueba más tarde.'
+          : again ? 'Open-Meteo sigue sin responder desde esta red (límite gratuito). Prueba en unos minutos.'
           : 'Límite de peticiones por minuto alcanzado. Espera un minuto.');
       }
       if (!res.ok || (data && data.error)) {

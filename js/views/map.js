@@ -10,6 +10,7 @@ import { toast, debounce } from '../ui.js';
 import { openDetail, closeDetail, detailOpen, setRoseHost, ROSE_SIZE } from './mapdetail.js';
 import * as rv from './reservoirs.js';
 import * as rivers from '../rivers.js';
+import { levelRow, cell, figUnit } from '../levelrow.js';
 import * as bolt from '../lightning.js';
 import { getForecast } from '../data.js';
 import { wxIcon } from '../icons.js';
@@ -1183,39 +1184,35 @@ function showRivers() {
   S.riverTimer = setInterval(draw, 30 * 60e3);
 }
 function openRiver(g) {
-  const r = g.r, tr = rivers.trend(r), st = rivers.lvlStyle(r);
+  const r = g.r;
   const html = `<div class="rv-pop-in">
-    <div class="rv-top"><b>${f.esc(rivers.stationTitle(r))}</b><span class="pv-chip" style="background:${st.bg};color:${st.fg}">${f.isNum(r.lvl) ? rivers.LVL[r.lvl].name : 'Sin umbrales'}</span></div>
-    <div class="pv-pop-grid"><span>Caudal</span><b>${rivers.qText(r.q)}</b><span>Nivel</span><b>${rivers.nText(r.n)}</b><span>Tendencia</span><b>${rivers.trendIcon(tr)} ${rivers.trendText(tr)}</b></div>
+    ${rivers.riverHead(r, { compact: true })}
     ${rivers.spark24(r)}
     ${r.thr ? `<div class="rv-pop-meta">Umbrales: ${rivers.thrText(r)}</div>` : ''}
-    <div class="rv-pop-meta">${f.esc(r.src)} · ${rivers.riverTime(r)}</div>
     <a href="#/embalses?r=${encodeURIComponent(r.id)}">Ver previsión de caudal ›</a></div>`;
-  L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+  L.popup({ className: 'rv-pop', maxWidth: 290, minWidth: 260, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([r.lat, r.lon]).setContent(html).openOn(S.map);
 }
 function openGauge(g) {
   const r = g.r;
-  const row = (label, v) => `<span>${label}</span><b>${f.isNum(v) ? f.precip(v, true) : '–'}</b>`;
+  const v = (x) => (f.isNum(x) ? f.precip(x, true) : '–');
   const html = `<div class="rv-pop-in">
-    <div class="rv-top"><b>${f.esc(rv.stationName(r[1]))}</b></div>
-    <div class="pv-pop-grid">${row('Última hora', r[5])}${row('6 horas', r[6])}${row('12 horas', r[7])}${row('24 horas', r[8])}</div>
-    <div class="rv-pop-meta">Pluviómetro de ${f.esc(r[10] || 'AEMET')}${f.isNum(r[4]) ? ` · ${Math.round(r[4])} m` : ''} · hasta las ${rv.gaugeTime(g.d)}</div></div>`;
-  L.popup({ className: 'rv-pop', maxWidth: 240, minWidth: 190, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+    ${levelRow({
+      name: f.esc(rv.stationName(r[1])),
+      meta: [`Pluviómetro ${f.esc(r[10] || 'AEMET')}`, f.isNum(r[4]) && `${Math.round(r[4])} m`, rv.gaugeTime(g.d)],
+      fig: figUnit(v(r[8])), sub: 'en 24 horas',
+      foot: [cell('Última hora', v(r[5])), cell('6 horas', v(r[6])), cell('12 horas', v(r[7]))],
+    })}</div>`;
+  L.popup({ className: 'rv-pop', maxWidth: 290, minWidth: 250, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([r[2], r[3]]).setContent(html).openOn(S.map);
 }
 
 // Ficha de un embalse al tocarlo
 function openReservoir(x) {
-  const [, , cap, cur, prev, year] = x.r;
   const html = `<div class="rv-pop-in">
-    <div class="rv-top"><b>${f.esc(x.name)}</b><span class="rv-pct" style="color:${x.color}">${Math.round(x.pct)} %</span></div>
-    ${rv.bar(rv.pc(cur, cap))}
-    <div class="rv-sub"><span>${rv.hm3(cur)} de ${rv.hm3(cap)}</span>${rv.delta(f.isNum(prev) ? cur - prev : null)}</div>
-    ${x.live ? rv.liveLine(x.live) : ''}
-    <div class="rv-pop-meta">${f.esc(x.basin)}${f.isNum(year) ? ` · hace un año ${Math.round(rv.pc(year, cap))} %` : ''}${x.live ? ' · barra: boletín semanal' : ''}</div>
+    ${rv.reservoirHead(x.r, { basinName: x.basin, live: x.live, compact: true })}
     <a href="#/embalses?e=${x.i}">Ver ficha y previsión ›</a></div>`;
-  L.popup({ className: 'rv-pop', maxWidth: 260, minWidth: 210, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
+  L.popup({ className: 'rv-pop', maxWidth: 300, minWidth: 270, autoPanPaddingTopLeft: [10, 150], autoPanPaddingBottomRight: [70, 140] })
     .setLatLng([x.lat, x.lon]).setContent(html).openOn(S.map);
 }
 

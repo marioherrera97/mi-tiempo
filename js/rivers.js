@@ -3,6 +3,7 @@
 import { getJSON } from './api.js';
 import * as f from './format.js';
 import { getSaih } from './views/reservoirs.js';
+import { kmText, cell, levelRow, statusDot, figUnit } from './levelrow.js';
 
 export const getRivers = () => getSaih().then(async (d) => {
   const list = d.rivers || [];
@@ -100,7 +101,7 @@ export function trend(r) {
   const d = now - before, base = Math.max(Math.abs(before), f.isNum(r.q) ? 0.5 : 0.05);
   return d / base > 0.08 ? 1 : d / base < -0.08 ? -1 : 0;
 }
-export const trendIcon = (t) => (t > 0 ? '▲' : t < 0 ? '▼' : '');
+export const trendIcon = (t) => (t > 0 ? '↑' : t < 0 ? '↓' : '');
 export const trendText = (t) => (t > 0 ? 'subiendo' : t < 0 ? 'bajando' : 'estable');
 
 // «Órbigo en Santa Marina del Rey»; sin repetir el río si el nombre ya lo lleva («Guadiana en La Cubeta»)
@@ -215,14 +216,36 @@ export async function renderRiverForecast(box, r) {
 }
 
 // Fila desplegable de una estación (vista de embalses y lluvia)
+// Barra hasta algo más del umbral de alerta, con una raya del color de cada umbral
+export function thrBar(r) {
+  const v = r.thv === 'q' ? r.q : r.n;
+  if (!r.thr?.length || !f.isNum(v)) return '';
+  const top = Math.max(r.thr[r.thr.length - 1] * 1.15, v * 1.05);
+  const pos = (x) => Math.min(100, Math.max(0, (100 * x) / top)).toFixed(1);
+  return `<div class="rv-bar"><i style="width:${pos(v)}%;background:${lvlStyle(r).bg}"></i>${r.thr.map((t, i) => `<u class="rv-thr" style="left:${pos(t)}%;background:${LVL[i + 1].bg}" title="${LVL[i + 1].name}"></u>`).join('')}</div>`;
+}
+const trendCell = (t) => cell('Tendencia', t > 0 ? '↑ Subiendo' : t < 0 ? '↓ Bajando' : 'Estable');
+
+// Cabecera de una estación de aforo (lista de Ríos y ficha del mapa). `compact`: la hora va con la red, arriba
+export function riverHead(r, { km, compact = false } = {}) {
+  const st = lvlStyle(r);
+  return levelRow({
+    name: f.esc(stationTitle(r)),
+    meta: [f.isNum(km) && kmText(km), f.esc(r.src) + (compact ? ` ${riverTime(r)}` : '')],
+    fig: figUnit(mainText(r)),
+    sub: f.isNum(r.q) ? (f.isNum(r.n) ? `nivel ${nText(r.n)}` : 'caudal') : 'nivel del río',
+    bar: thrBar(r),
+    foot: [
+      cell('Estado', `${statusDot(st.bg)}${f.isNum(r.lvl) ? LVL[r.lvl].name : 'Sin umbrales'}`),
+      trendCell(trend(r)),
+      !compact && cell('Dato', riverTime(r)),
+    ],
+  });
+}
+
 export function riverRow(r, km) {
-  const st = lvlStyle(r), tr = trend(r);
   return `<details class="rv-res rv-river" data-r="${f.esc(r.id)}">
-    <summary>
-      <div class="rv-top"><b>${f.esc(stationTitle(r))}</b>${f.isNum(km) ? `<span class="rv-km">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km</span>` : ''}
-        <span class="pv-chip" style="background:${st.bg};color:${st.fg}">${mainText(r)} ${trendIcon(tr)}</span></div>
-      <div class="rv-sub"><span>${f.isNum(r.q) && f.isNum(r.n) ? `${nText(r.n)} · ` : ''}${f.esc(r.src)}, ${riverTime(r)}</span><span>${f.isNum(r.lvl) ? LVL[r.lvl].name : ''}${f.isNum(r.lvl) && tr ? ' · ' : ''}${tr ? trendText(tr) : ''}</span></div>
-    </summary>
+    <summary class="rv-row">${riverHead(r, { km })}</summary>
     <div class="rv-more">
       ${spark24(r)}
       ${r.thr ? `<p class="note" style="margin:6px 0">Umbrales: ${thrText(r)}</p>` : ''}

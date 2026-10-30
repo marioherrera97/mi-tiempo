@@ -9,7 +9,8 @@ import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
 import { reservoirForecast, inflowForecast } from '../resforecast.js';
 import { normals } from '../normals.js';
-import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle, getRivers } from '../rivers.js';
+import { kmText, cell, levelRow, statusDot } from '../levelrow.js';
+import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle, getRivers, riverTime } from '../rivers.js';
 
 // Se vuelve a pedir cada hora: la app puede pasar días abierta en el móvil y el boletín cambia cada semana
 let data = null, dataAt = 0;
@@ -208,43 +209,40 @@ function spark(series, cap) {
     <polyline points="${xy.join(' ')}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
-// Fila de nivel: nombre y datos a la izquierda, porcentaje y volumen a la derecha, barra (con la media de
-// 10 años) y un pie en columnas con las referencias
-const kmText = (km) => `${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km`;
-const cell = (k, v) => `<span class="rv-fi"><em>${k}</em><span>${v}</span></span>`;
+// Fila de nivel con porcentaje: volumen debajo y raya en la media de 10 años
 const AVG_LABEL = '<i class="rv-tick"></i>Media 10 años';
-function levelRow({ name, meta, pct, vol, cap, ref, foot }) {
-  return `<div class="rv-head">
-      <div class="rv-id"><span class="rv-name">${name}</span><span class="rv-meta">${meta.filter(Boolean).join(' · ')}</span></div>
-      <div class="rv-fig"><span class="rv-fig-p">${Math.round(pct)}<small>%</small></span>
-        <span class="rv-vol">${num(vol)}${f.isNum(cap) ? `<span> / ${num(cap)}</span>` : ''} hm³</span></div>
-    </div>
-    ${bar(pct, ref)}
-    <div class="rv-foot">${foot.filter(Boolean).join('')}</div>`;
-}
+const pctRow = ({ pct, vol, cap, ref, ...o }) => levelRow({
+  ...o, fig: `${Math.round(pct)}<small>%</small>`,
+  sub: `${num(vol)}${f.isNum(cap) ? `<span> / ${num(cap)}</span>` : ''} hm³`, bar: bar(pct, ref),
+});
 const dayShort = (iso) => f.dateShort(iso);
 let bulletin = '';  // fecha del boletín semanal que se está viendo
 
-// Fila de un embalse; al tocarla se despliega su detalle. Con dato en tiempo real se muestra ese
-// (más reciente) y el del boletín queda en el detalle
+// Cabecera de un embalse (lista y ficha del mapa). Con dato en tiempo real se muestra ese, que es el más
+// reciente, y el del boletín queda en el detalle. `compact`: sin la columna de la hora (va en los datos de arriba)
+export function reservoirHead(r, { basinName, dist, live: L, compact = false }) {
+  const [name, , cap, cur, prev, year, avg10, elec] = r;
+  return pctRow({
+    name: f.esc(nice(name)),
+    meta: [f.isNum(dist) && kmText(dist), basinName && f.esc(basinName), elec ? 'Hidroeléctrico' : !basinName && 'Riego y abastecimiento',
+      L && f.esc(L.src) + (compact ? ` ${liveTime(L)}` : '')],
+    pct: L ? L.pct : pc(cur, cap), vol: L ? L.vol : cur, cap,
+    ref: f.isNum(avg10) ? pc(avg10, cap) : null,
+    foot: [
+      L ? cell('24 h', delta(L.d24)) : cell('Semana', delta(f.isNum(prev) ? cur - prev : null)),
+      f.isNum(year) && cell('Hace un año', `${Math.round(pc(year, cap))} %`),
+      f.isNum(avg10) && cell(AVG_LABEL, `${Math.round(pc(avg10, cap))} %`),
+      L && !compact && cell('Dato', liveTime(L)),
+    ],
+  });
+}
+
+// Fila de un embalse; al tocarla se despliega su detalle
 function resRow(r, basinName, dist, live, idx) {
-  const [name, , cap, cur, prev, year, avg10, elec, lat, , series] = r;
+  const [, , cap, cur, , year, avg10, elec, lat, , series] = r;
   const L = live;
   return `<details class="rv-res"${f.isNum(lat) ? ` data-i="${idx}"` : ''}>
-    <summary class="rv-row">
-      ${levelRow({
-        name: f.esc(nice(name)),
-        meta: [dist !== undefined && kmText(dist), dist !== undefined && f.esc(basinName), elec ? 'Hidroeléctrico' : dist === undefined && 'Riego y abastecimiento', L && f.esc(L.src)],
-        pct: L ? L.pct : pc(cur, cap), vol: L ? L.vol : cur, cap,
-        ref: f.isNum(avg10) ? pc(avg10, cap) : null,
-        foot: [
-          L ? cell('24 h', delta(L.d24)) : cell('Semana', delta(f.isNum(prev) ? cur - prev : null)),
-          f.isNum(year) && cell('Hace un año', `${Math.round(pc(year, cap))} %`),
-          f.isNum(avg10) && cell(AVG_LABEL, `${Math.round(pc(avg10, cap))} %`),
-          L && cell('Dato', liveTime(L)),
-        ],
-      })}
-    </summary>
+    <summary class="rv-row">${reservoirHead(r, { basinName: dist !== undefined ? basinName : null, dist, live })}</summary>
     <div class="rv-more">
       ${spark(series, cap)}
       <div class="rv-cmp">
@@ -293,7 +291,7 @@ function renderReservoirs(box, d, sh) {
       <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)), d.res.indexOf(r))).join('')}</div>` : ''}
     ${sh?.reservoirs?.length ? `<div class="section-title">En tiempo real cerca de ${f.esc(here.name)}</div>
       <div class="card rv-list rv-livelist">${sh.reservoirs.filter((L) => f.isNum(L.lat)).map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow rv-row">
-        ${levelRow({
+        ${pctRow({
           name: f.esc(stationName(L.name)), meta: [kmText(km), f.esc(L.basin), f.esc(L.src)],
           pct: L.pct, vol: L.vol, cap: L.pct > 0 ? L.vol / (L.pct / 100) : null,
           foot: [cell('24 h', delta(L.d24)), cell('Dato', liveTime(L))],
@@ -305,7 +303,7 @@ function renderReservoirs(box, d, sh) {
       const list = d.res.filter((r) => r[1] === i).sort((a, c) => c[2] - a[2]);
       return `<details class="rv-basin">
         <summary class="rv-row">
-          ${levelRow({
+          ${pctRow({
             name: f.esc(b.name), meta: [`${b.n} embalses`], pct: bp, vol: b.cur, cap: b.cap,
             ref: f.isNum(b.avg10) ? pc(b.avg10, b.cap) : null,
             foot: [
@@ -540,8 +538,8 @@ function renderRivers(box, all, focusId) {
   box.innerHTML = `<div class="section-title">Ríos</div>
     ${focus ? `<div class="card rv-list">${riverRow(focus, distKm(here.lat, here.lon, focus.lat, focus.lon))}</div>` : ''}
     ${warn.length ? `<div class="card"><div class="card-head"><h2>Ríos en aviso</h2><span class="tiny">${warn.length} ${warn.length === 1 ? 'estación' : 'estaciones'}</span></div>
-      <div class="pv-top">${warn.slice(0, 10).map((r) => `<a class="pv-row" href="#/embalses?r=${encodeURIComponent(r.id)}"><span class="pv-name">${f.esc(stationTitle(r))}</span>
-        <span class="pv-chip" style="background:${lvlStyle(r).bg};color:${lvlStyle(r).fg}">${LVL[r.lvl].name} · ${mainText(r)}</span></a>`).join('')}</div></div>` : ''}
+      <div class="pv-top">${warn.slice(0, 10).map((r) => `<a class="pv-row rv-wrow" href="#/embalses?r=${encodeURIComponent(r.id)}"><span class="pv-name">${f.esc(stationTitle(r))}<small>${f.esc(r.src)} · ${riverTime(r)}</small></span>
+        <span class="rv-wv">${mainText(r)}<small>${statusDot(lvlStyle(r).bg)}${LVL[r.lvl].name}</small></span></a>`).join('')}</div></div>` : ''}
     ${near.length ? `<div class="card rv-list"><div class="card-head"><h2>Cerca de ${f.esc(here.name)}</h2><span class="tiny">caudal medido ahora</span></div>
       ${near.map(([r, km]) => riverRow(r, km)).join('')}</div>`
       : `<p class="note">No hay estaciones de aforo con datos públicos a menos de 60 km. ${warn.length ? '' : 'Ningún río de las redes con umbrales está en aviso ahora.'}</p>`}

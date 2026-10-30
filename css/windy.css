@@ -338,7 +338,12 @@ body.map-mode { background: #2b2b2b; }
 /* Ficha de un embalse en el mapa */
 .rv-pop .leaflet-popup-content-wrapper { background: rgba(42,43,48,.97); color: #f2f3f5; border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
 .rv-pop .leaflet-popup-tip { background: rgba(42,43,48,.97); }
-.rv-pop .leaflet-popup-content { margin: 12px 14px; font-size: 13px; line-height: 1.35; }
+.rv-pop .leaflet-popup-content { margin: 14px 16px 12px; font-size: 13px; line-height: 1.35; }
+/* Las fichas del mapa van siempre en oscuro: los colores de las filas de nivel, fijos */
+.rv-pop { --text: #f2f3f5; --text-2: #c2c7d0; --text-3: #8f96a3; --card-2: rgba(255,255,255,.12); --line: rgba(255,255,255,.1); }
+.rv-pop .rv-head { margin-right: 14px; }
+.rv-pop .rv-name, .rv-pop .rv-meta { white-space: normal; }
+.rv-pop .rv-spark { margin-top: 10px; }
 .rv-pop a.leaflet-popup-close-button { color: #bbb; top: 4px; right: 4px; }
 .rv-pop .rv-top { margin: 0 14px 6px 0; }
 .rv-pop .rv-bar { background: rgba(255,255,255,.12); }

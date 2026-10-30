@@ -5,6 +5,7 @@ import * as f from '../format.js';
 import { loading, errorBox, chips } from '../ui.js';
 import { getAllGauges, getData, getSaih, gaugeVal, gaugeWindow, stationName, rainColor, gaugeTime, nice, fillColor } from './reservoirs.js';
 import { getJSON } from '../api.js';
+import { levelRow, cell, statusDot, figUnit, rankRow } from '../levelrow.js';
 
 const distKm = (a, b, c, d) => {
   const R = 6371, r = Math.PI / 180;
@@ -13,11 +14,7 @@ const distKm = (a, b, c, d) => {
 };
 const km = (v) => (v < 10 ? v.toFixed(1).replace('.', ',') : Math.round(v)) + ' km';
 const mm = (v) => (f.isNum(v) ? f.precip(v, false) : '–');
-const chip = (v) => {
-  if (!f.isNum(v) || v < 0.1) return `<span class="pv-chip pv-dry">0</span>`;
-  const [bg, fg] = rainColor(v);
-  return `<span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)}</span>`;
-};
+const val = (v) => (f.isNum(v) ? f.precip(v, true) : '–');
 
 let win = null;
 let showAll = false;
@@ -83,11 +80,11 @@ async function renderFlood(box, g, em, sh) {
   wet.sort((a, b) => b.lv[0] - a.lv[0] || (b.c.mean24 + b.c.max24 + b.fc) - (a.c.mean24 + a.c.max24 + a.fc));
   const alerts = wet.filter((x) => x.lv[0] > 0);
   const hl = hc ? level(hc, fcHere) : null;
-  const row = (x) => `<div class="fl-row">
-    <span class="fl-dot" style="background:${x.lv[2]}"></span>
-    <div class="fl-main"><b>${f.esc(x.name)}</b><small>${f.esc(x.basin)} · ${x.c.n} pluviómetros · máx. ${f.esc(stationName(x.c.top?.[1] || ''))}</small></div>
-    <div class="fl-vals"><span>24 h ${chip(x.c.mean24)}</span><span>6 h máx ${chip(x.c.max6)}</span><span>prev. ${chip(x.fc)}</span></div>
-  </div>`;
+  const row = (x) => `<div class="rv-row fl-row">${levelRow({
+    name: f.esc(x.name), meta: [f.esc(x.basin), `${x.c.n} ${x.c.n === 1 ? 'pluviómetro' : 'pluviómetros'}`],
+    fig: figUnit(val(x.c.mean24)), sub: `media 24 h · ${statusDot(x.lv[2])}${x.lv[1]}`,
+    foot: [cell('Máx. en 24 h', val(x.c.max24)), cell('Máx. en 6 h', val(x.c.max6)), cell('Previsto 24 h', val(x.fc))],
+  })}</div>`;
   box.innerHTML = `
     <div class="card">
       <div class="card-head"><h2>Aviso de crecida</h2><span class="tiny">lluvia aguas arriba</span></div>
@@ -130,23 +127,22 @@ function renderRank(box, g, em) {
     <div class="card rr-hero">
       <div class="rr-sum">
         <div><b class="num">${wetRows.length}</b><small>de ${total} pluviómetros con lluvia</small></div>
-        <div><b class="num">${wetRows[0] ? f.precip(gaugeVal(wetRows[0], w), true) : '0'}</b><small>máximo · ${wetRows[0] ? f.esc(stationName(wetRows[0][1])) : '–'}</small></div>
+        <div><b class="num">${wetRows[0] ? figUnit(f.precip(gaugeVal(wetRows[0], w), true)) : '0'}</b><small>máximo · ${wetRows[0] ? f.esc(stationName(wetRows[0][1])) : '–'}</small></div>
       </div>
       <p class="tiny" style="margin:6px 0 0">Últimas ${w} h hasta las ${gaugeTime(g)}</p>
     </div>
     ${top.length ? `<div class="card"><div class="card-head"><h2>Dónde llueve más</h2><span class="tiny">${w} h</span></div>
-      <div class="pv-top">${top.map((r, i) => {
-        const d = distKm(here.lat, here.lon, r[2], r[3]);
-        return `<div class="pv-row rr-row"><span class="pv-n">${i + 1}</span>
-          <span class="pv-name">${f.esc(stationName(r[1]))}<small>${f.esc(r[10] || 'AEMET')} · a ${km(d)}${f.isNum(r[5]) && r[5] >= 0.1 && w > 1 ? ` · ahora ${mm(r[5])} mm/h` : ''}</small></span>
-          ${chip(gaugeVal(r, w))}</div>`;
+      <div class="rk-list">${top.map((r, i) => {
+        const d = distKm(here.lat, here.lon, r[2], r[3]), v = gaugeVal(r, w);
+        return rankRow({ n: i + 1, name: f.esc(stationName(r[1])),
+          meta: `${f.esc(r[10] || 'AEMET')} · a ${km(d)}${f.isNum(r[5]) && r[5] >= 0.1 && w > 1 ? ` · ahora ${mm(r[5])} mm/h` : ''}`,
+          fig: figUnit(f.precip(v, true)), frac: v / gaugeVal(top[0], w), color: rainColor(v)[0] });
       }).join('')}</div>
       ${!showAll && wetRows.length > 25 ? `<button class="btn ghost rr-all" id="rrAll">Ver los 100 primeros</button>` : ''}
     </div>` : `<div class="card"><p class="fl-ok">No ha llovido en ningún pluviómetro en las últimas ${w} h.</p></div>`}
     ${basins.length ? `<div class="card"><div class="card-head"><h2>Por cuencas</h2><span class="tiny">media de los pluviómetros</span></div>
-      <div class="rr-basins">${basins.map((x) => `<div class="rr-b"><span class="rr-bn">${f.esc(x.b)}<small>${x.wet} de ${x.n} con lluvia · máx ${mm(x.max)}</small></span>
-        <span class="rr-bar"><i style="width:${Math.max(2, (x.mean / maxMean) * 100)}%;background:${rainColor(Math.max(0.5, x.mean))[0]}"></i></span>
-        <b class="num">${f.precip(x.mean, false)}</b></div>`).join('')}</div>
+      <div class="rk-list">${basins.map((x) => rankRow({ name: f.esc(x.b), meta: `${x.wet} de ${x.n} con lluvia · máx. ${mm(x.max)}`,
+        fig: figUnit(f.precip(x.mean, true)), frac: x.mean / maxMean, color: rainColor(Math.max(0.5, x.mean))[0] })).join('')}</div>
       <p class="note">Cada pluviómetro se asigna a la cuenca del embalse más cercano. Valores en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()}.</p></div>` : ''}`;
   head.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', +c.dataset.v === w));
   const all = box.querySelector('#rrAll');

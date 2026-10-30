@@ -15,3 +15,10 @@ export function levelRow({ name, meta = [], fig, sub = '', bar = '', foot = [] }
     ${bar}
     ${ft.length ? `<div class="rv-foot">${ft.join('')}</div>` : ''}`;
 }
+
+// Fila de una clasificación: puesto, nombre y datos, la cifra a la derecha y debajo una barra fina
+// proporcional al primero (`frac` de 0 a 1)
+export const rankRow = ({ n, name, meta, fig, frac, color }) => `<div class="rk-row">
+    ${n !== undefined ? `<span class="rk-n">${n}</span>` : ''}<span class="rk-id"><span class="rk-name">${name}</span>${meta ? `<span class="rk-meta">${meta}</span>` : ''}</span>
+    <span class="rk-fig">${fig}</span>
+    <span class="rk-bar"><i style="width:${Math.max(1.5, Math.min(1, frac) * 100).toFixed(1)}%;background:${color}"></i></span></div>`;

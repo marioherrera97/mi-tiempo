@@ -57,7 +57,7 @@ export function precip(mm, withUnit = false, hideZero = false) {
   const v = precipVal(mm);
   if (v === null) return dash;
   if (hideZero && v < (settings.precip === 'in' ? 0.004 : 0.1)) return '';
-  const r = settings.precip === 'in' ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v);
+  const r = (settings.precip === 'in' ? v.toFixed(2) : v < 10 ? v.toFixed(1) : String(Math.round(v))).replace('.', ',');
   return withUnit ? `${r} ${precipUnit()}` : String(r);
 }
 export const precipUnit = () => (settings.precip === 'in' ? 'in' : 'mm');

@@ -9,7 +9,7 @@ import { makeChart, baseOptions, theme, alpha } from '../charts.js';
 import { colorAt } from '../colors.js';
 import { reservoirForecast, inflowForecast } from '../resforecast.js';
 import { normals } from '../normals.js';
-import { kmText, cell, levelRow, statusDot } from '../levelrow.js';
+import { kmText, cell, levelRow, statusDot, figUnit, rankRow } from '../levelrow.js';
 import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle, getRivers, riverTime } from '../rivers.js';
 
 // Se vuelve a pedir cada hora: la app puede pasar días abierta en el móvil y el boletín cambia cada semana
@@ -134,7 +134,6 @@ export const rainColor = (mm) => {
   return [`rgb(${r | 0},${g | 0},${b | 0})`, lum > 0.6 ? '#0d141c' : '#fff'];
 };
 export const gaugeTime = (d) => new Date(d.updated).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-const mm = (v) => (f.isNum(v) ? f.precip(v, false) : '–');
 
 // SAIH Ebro (pedido desde la app): su tabla solo trae la última hora, el día y las 24 h, así que las 6 y 12 h
 // quedan sin dato. La serie «PACUM» de la ficha de cada estación NO vale para completarlas: son totales diarios
@@ -145,29 +144,27 @@ function renderGauges(box, d) {
   const w = gaugeWindow(d);
   const near = d.st.map((r) => [r, distKm(here.lat, here.lon, r[2], r[3])]).sort((a, b) => a[1] - b[1]).slice(0, 4).filter(([, km]) => km < 60);
   const top = d.st.filter((r) => gaugeVal(r, w) > 0).sort((a, b) => gaugeVal(b, w) - gaugeVal(a, w)).slice(0, 8);
-  const cell = (v) => {
-    if (!f.isNum(v)) return '<td class="muted">–</td>';
-    if (v < 0.1) return '<td class="muted">0</td>';
-    const [bg, fg] = rainColor(v);
-    return `<td><span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)}</span></td>`;
-  };
+  const val = (v) => (f.isNum(v) ? f.precip(v, true) : '–');
+  const LABEL = { 1: 'Última hora', 6: '6 horas', 12: '12 horas', 24: '24 horas' };
+  // Lo de la ventana principal (24 h, o 12 h al principio) en grande; las otras en el pie
+  const gaugeRow = ([r, km]) => `<div class="rv-row">${levelRow({
+    name: f.esc(stationName(r[1])), meta: [kmText(km), f.esc(r[10] || 'AEMET'), f.isNum(r[4]) && `${Math.round(r[4])} m`],
+    fig: figUnit(val(gaugeVal(r, w))), sub: `en ${w} horas`,
+    foot: [1, 6, 12, 24].filter((x) => x !== w).map((x) => cell(LABEL[x], val(gaugeVal(r, x)))),
+  })}</div>`;
+  const maxTop = top.length ? gaugeVal(top[0], w) : 1;
   box.innerHTML = `
-    <div class="card">
+    <div class="card rv-list">
       <div class="card-head"><h2>Pluviómetros cerca</h2><span class="tiny">hasta las ${gaugeTime(d)}</span></div>
-      ${near.length ? `<div class="pv-table-wrap"><table class="pv-table">
-        <thead><tr><th></th><th>1 h</th><th>6 h</th><th>12 h</th><th>24 h</th></tr></thead>
-        <tbody>${near.map(([r, km]) => `<tr><th><b>${f.esc(stationName(r[1]))}</b><small>${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(r[10] || 'AEMET')}</small></th>
-          ${cell(r[5])}${cell(r[6])}${cell(r[7])}${cell(r[8])}</tr>`).join('')}</tbody></table></div>`
-        : '<p class="note">No hay ningún pluviómetro de AEMET a menos de 60 km de este lugar.</p>'}
-      <p class="note">Lluvia medida en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()} por las estaciones de AEMET, de las redes SAIH de las confederaciones hidrográficas, de la ACA, de Hidrosur y de MeteoGalicia (datos sin validar).
+      ${near.length ? near.map(gaugeRow).join('')
+        : '<p class="note rv-pad">No hay ningún pluviómetro de AEMET a menos de 60 km de este lugar.</p>'}
+      <p class="note rv-pad">Lluvia medida en ${f.precipUnit() === 'mm' ? 'l/m²' : f.precipUnit()} por las estaciones de AEMET, de las redes SAIH de las confederaciones hidrográficas, de la ACA, de Hidrosur y de MeteoGalicia (datos sin validar).
         ${w === 12 ? 'Las 24 h estarán completas cuando el proceso horario lleve un día funcionando.' : ''}</p>
     </div>
     ${top.length ? `<div class="card"><div class="card-head"><h2>Donde más ha llovido</h2><span class="tiny">últimas ${w} h</span></div>
-      <div class="pv-top">${top.map((r, i) => {
+      <div class="rk-list">${top.map((r, i) => {
         const v = gaugeVal(r, w);
-        const [bg, fg] = rainColor(v);
-        return `<div class="pv-row"><span class="pv-n">${i + 1}</span><span class="pv-name">${f.esc(stationName(r[1]))}</span>
-          <span class="pv-chip" style="background:${bg};color:${fg}">${mm(v)} ${f.precipUnit()}</span></div>`;
+        return rankRow({ n: i + 1, name: f.esc(stationName(r[1])), meta: f.esc(r[10] || 'AEMET'), fig: figUnit(f.precip(v, true)), frac: v / maxTop, color: rainColor(v)[0] });
       }).join('')}</div></div>` : ''}`;
 }
 

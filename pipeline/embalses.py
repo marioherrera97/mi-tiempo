@@ -44,7 +44,9 @@ def day(s):
     m = re.match(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', s)  # formato de mdb-export por defecto (mes/día/año)
     if m:
         y = int(m[3])
-        return date(y + 2000 if y < 100 else y, int(m[1]), int(m[2]))
+        if y < 100:  # año con dos cifras: los datos van de 1988 a hoy (99 es 1999, no 2099)
+            y += 2000 if y <= date.today().year % 100 else 1900
+        return date(y, int(m[1]), int(m[2]))
     raise ValueError(s)
 
 
@@ -53,7 +55,7 @@ def read_rows(mdb):
     if shutil.which('mdb-tables') and shutil.which('mdb-export'):
         tables = subprocess.run(['mdb-tables', '-1', mdb], capture_output=True, text=True, check=True).stdout.splitlines()
         table = next(t for t in tables if t.startswith(TABLE_PREFIX))
-        out = subprocess.run(['mdb-export', '-D', '%Y-%m-%d', mdb, table], capture_output=True, check=True).stdout
+        out = subprocess.run(['mdb-export', '-D', '%Y-%m-%d', '-T', '%Y-%m-%d %H:%M:%S', mdb, table], capture_output=True, check=True).stdout
         cols = csv.DictReader(io.StringIO(out.decode('utf-8')))
         for r in cols:
             yield r['AMBITO_NOMBRE'], r['EMBALSE_NOMBRE'], r['FECHA'], r['AGUA_TOTAL'], r['AGUA_ACTUAL'], r['ELECTRICO_FLAG']
@@ -255,6 +257,9 @@ def main(mdb, dst, wiki=None):
             continue
         data[(amb.strip(), emb.strip())][day(f)] = (cap, cur, str(el).strip().startswith('1'))
     last = max(d for s in data.values() for d in s)
+    # Una fecha en el futuro es que se han leído mal las fechas: mejor no publicar nada que datos de otra época
+    if not date.today() - timedelta(days=60) <= last <= date.today() + timedelta(days=1):
+        raise SystemExit(f'Última semana imposible: {last}')
     weeks = [last - timedelta(weeks=k) for k in range(WEEKS - 1, -1, -1)]
 
     def at(series, d, tol=3):

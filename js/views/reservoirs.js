@@ -11,11 +11,18 @@ import { reservoirForecast, inflowForecast } from '../resforecast.js';
 import { normals } from '../normals.js';
 import { riverRow, renderRiverForecast, LVL, stationTitle, mainText, lvlStyle, getRivers } from '../rivers.js';
 
-let data = null;
-export const getData = () => (data ||= fetch('vendor/embalses.json').then((r) => {
-  if (!r.ok) throw new Error(`Error HTTP ${r.status}`);
-  return r.json();
-}).catch((e) => { data = null; throw e; }));
+// Se vuelve a pedir cada hora: la app puede pasar días abierta en el móvil y el boletín cambia cada semana
+let data = null, dataAt = 0;
+export const getData = () => {
+  if (!data || Date.now() - dataAt > 3600e3) {
+    dataAt = Date.now();
+    data = fetch('vendor/embalses.json', { cache: 'no-cache' }).then((r) => {
+      if (!r.ok) throw new Error(`Error HTTP ${r.status}`);
+      return r.json();
+    }).catch((e) => { data = null; throw e; });
+  }
+  return data;
+};
 
 // ---------- Pluviómetros de AEMET (data/pluviometros.json, se rehace cada hora en GitHub Actions) ----------
 let gauges = null, gaugesAt = 0;

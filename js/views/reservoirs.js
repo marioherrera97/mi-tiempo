@@ -116,7 +116,7 @@ export function liveFor(d, sh) {
 }
 const liveTime = (L) => new Date(L.t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 // Línea «Ahora» con el dato en tiempo real de un embalse
-export const liveLine = (L) => `<div class="rv-live"><span class="rv-dot"></span>Ahora <b style="color:${fillColor(L.pct)}">${p1(L.pct)}</b> · ${hm3(L.vol)}${f.isNum(L.d24) ? ` · 24 h ${delta(L.d24)}` : ''}<small>${f.esc(L.src)}, ${liveTime(L)}</small></div>`;
+export const liveLine = (L) => `<div class="rv-live"><span class="rv-dot"></span>Tiempo real <b>${p1(L.pct)}</b> · ${hm3(L.vol)}${f.isNum(L.d24) ? ` · 24 h ${delta(L.d24)}` : ''}<small>${f.esc(L.src)} · ${liveTime(L)}</small></div>`;
 
 // [indicativo, nombre, lat, lon, altitud, 1 h, 6 h, 12 h, 24 h, horas con dato]
 const GAUGE_COL = { 1: 5, 6: 6, 12: 7, 24: 8 };
@@ -179,15 +179,16 @@ export const hm3 = (v) => num(v) + ' hm³';
 const p1 = (v) => v.toFixed(1).replace('.', ',') + ' %';
 // Variación con signo y color (verde si sube el agua, rojo si baja)
 export const delta = (d, unit = ' hm³') => {
-  if (!f.isNum(d) || Math.abs(d) < 0.05) return '<span class="rv-d">=</span>';
-  const v = num(Math.abs(d));
-  return `<span class="rv-d ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'} ${v}${unit}</span>`;
+  if (!f.isNum(d) || Math.abs(d) < 0.05) return '<span class="rv-d">sin cambios</span>';
+  return `<span class="rv-d ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : '−'}${num(Math.abs(d))}${unit}</span>`;
 };
 // Nombres como en el boletín («Pardo, El», «Vellón,El-(Pedrezuela)») escritos de forma natural
 export const nice = (n) => n
   .replace(/^(.*?),\s*(El|La|Los|Las|As|Os|O|A|Nª Sª de)\b(.*)$/, '$2 $1$3')
   .replace(/-?\(/g, ' (').replace(/\s+/g, ' ').trim();
-export const bar = (p) => `<div class="rv-bar"><i style="width:${Math.min(100, Math.max(0, p)).toFixed(1)}%;background:${fillColor(p)}"></i></div>`;
+const clamp100 = (p) => Math.min(100, Math.max(0, p)).toFixed(1);
+// Barra de llenado; `ref` marca otro nivel (la media de 10 años) con una raya
+export const bar = (p, ref) => `<div class="rv-bar"><i style="width:${clamp100(p)}%;background:${fillColor(p)}"></i>${f.isNum(ref) ? `<u style="left:${clamp100(ref)}%"></u>` : ''}</div>`;
 const distKm = (a, b, c, d) => {
   const R = 6371, r = Math.PI / 180;
   const x = Math.sin(((c - a) * r) / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(((d - b) * r) / 2) ** 2;
@@ -207,23 +208,49 @@ function spark(series, cap) {
     <polyline points="${xy.join(' ')}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
-// Fila de un embalse; al tocarla se despliega su detalle
+// Fila de nivel: nombre y datos a la izquierda, porcentaje y volumen a la derecha, barra (con la media de
+// 10 años) y un pie en columnas con las referencias
+const kmText = (km) => `${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km`;
+const cell = (k, v) => `<span class="rv-fi"><em>${k}</em><span>${v}</span></span>`;
+const AVG_LABEL = '<i class="rv-tick"></i>Media 10 años';
+function levelRow({ name, meta, pct, vol, cap, ref, foot }) {
+  return `<div class="rv-head">
+      <div class="rv-id"><span class="rv-name">${name}</span><span class="rv-meta">${meta.filter(Boolean).join(' · ')}</span></div>
+      <div class="rv-fig"><span class="rv-fig-p">${Math.round(pct)}<small>%</small></span>
+        <span class="rv-vol">${num(vol)}${f.isNum(cap) ? `<span> / ${num(cap)}</span>` : ''} hm³</span></div>
+    </div>
+    ${bar(pct, ref)}
+    <div class="rv-foot">${foot.filter(Boolean).join('')}</div>`;
+}
+const dayShort = (iso) => f.dateShort(iso);
+let bulletin = '';  // fecha del boletín semanal que se está viendo
+
+// Fila de un embalse; al tocarla se despliega su detalle. Con dato en tiempo real se muestra ese
+// (más reciente) y el del boletín queda en el detalle
 function resRow(r, basinName, dist, live, idx) {
   const [name, , cap, cur, prev, year, avg10, elec, lat, , series] = r;
-  const p = pc(cur, cap);
+  const L = live;
   return `<details class="rv-res"${f.isNum(lat) ? ` data-i="${idx}"` : ''}>
-    <summary>
-      <div class="rv-top"><b>${f.esc(nice(name))}</b>${elec ? '<span class="rv-tag" title="Uso hidroeléctrico">⚡</span>' : ''}
-        ${dist !== undefined ? `<span class="rv-km">${dist < 10 ? dist.toFixed(1).replace('.', ',') : Math.round(dist)} km</span>` : ''}
-        <span class="rv-pct" style="color:${fillColor(p)}">${Math.round(p)} %</span></div>
-      ${bar(p)}
-      <div class="rv-sub"><span>${hm3(cur)} de ${hm3(cap)}</span>${delta(f.isNum(prev) ? cur - prev : null)}</div>
-      ${live ? liveLine(live) : ''}
+    <summary class="rv-row">
+      ${levelRow({
+        name: f.esc(nice(name)),
+        meta: [dist !== undefined && kmText(dist), dist !== undefined && f.esc(basinName), elec ? 'Hidroeléctrico' : dist === undefined && 'Riego y abastecimiento', L && f.esc(L.src)],
+        pct: L ? L.pct : pc(cur, cap), vol: L ? L.vol : cur, cap,
+        ref: f.isNum(avg10) ? pc(avg10, cap) : null,
+        foot: [
+          L ? cell('24 h', delta(L.d24)) : cell('Semana', delta(f.isNum(prev) ? cur - prev : null)),
+          f.isNum(year) && cell('Hace un año', `${Math.round(pc(year, cap))} %`),
+          f.isNum(avg10) && cell(AVG_LABEL, `${Math.round(pc(avg10, cap))} %`),
+          L && cell('Dato', liveTime(L)),
+        ],
+      })}
     </summary>
     <div class="rv-more">
       ${spark(series, cap)}
       <div class="rv-cmp">
         <span>Cuenca</span><b>${f.esc(basinName)}</b>
+        ${L ? `<span>Tiempo real (${f.esc(L.src)}, ${liveTime(L)})</span><b>${p1(L.pct)} · ${hm3(L.vol)}</b>` : ''}
+        <span>Boletín del ${dayShort(bulletin)}</span><b>${p1(pc(cur, cap))} · ${hm3(cur)}</b>
         <span>Hace un año</span><b>${f.isNum(year) ? `${p1(pc(year, cap))} · ${hm3(year)}` : '–'}</b>
         <span>Media 10 años</span><b>${f.isNum(avg10) ? `${p1(pc(avg10, cap))} · ${hm3(avg10)}` : '–'}</b>
         <span>Uso</span><b>${elec ? 'Hidroeléctrico' : 'Consuntivo (riego y abastecimiento)'}</b>
@@ -238,6 +265,7 @@ function renderReservoirs(box, d, sh) {
   const t = d.total;
   const p = pc(t.cur, t.cap);
   const upd = f.dateShort(d.updated) + ' ' + d.updated.slice(0, 4);
+  bulletin = d.updated;
   const here = state.place;
   const near = d.res.filter((r) => f.isNum(r[8]))
     .map((r) => [r, distKm(here.lat, here.lon, r[8], r[9])])
@@ -246,7 +274,7 @@ function renderReservoirs(box, d, sh) {
   box.innerHTML = `
     <div class="card rv-hero">
       <div class="card-head"><h2>Reserva de agua en España</h2><span class="tiny">semana del ${upd}</span></div>
-      <div class="rv-big"><span style="color:${fillColor(p)}">${p1(p)}</span><small>${hm3(t.cur)} de ${hm3(t.cap)}</small></div>
+      <div class="rv-big"><span>${p1(p)}</span><small>${hm3(t.cur)} de ${hm3(t.cap)}</small></div>
       ${bar(p)}
       <div class="rv-week">Esta semana ${delta(t.cur - t.prev)} <span class="muted">(${p1(pc(t.cur - t.prev, t.cap)).replace(/^(?!-)/, '+')} de la capacidad)</span></div>
       <div class="grid3 rv-stats">
@@ -264,20 +292,28 @@ function renderReservoirs(box, d, sh) {
     ${near.length ? `<div class="section-title">Embalses cerca de ${f.esc(here.name)}</div>
       <div class="card rv-list">${near.map(([r, km]) => resRow(r, d.basins[r[1]].name, km, live.get(d.res.indexOf(r)), d.res.indexOf(r))).join('')}</div>` : ''}
     ${sh?.reservoirs?.length ? `<div class="section-title">En tiempo real cerca de ${f.esc(here.name)}</div>
-      <div class="card rv-list rv-livelist">${sh.reservoirs.filter((L) => f.isNum(L.lat)).map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow">
-        <div class="rv-top"><b>${f.esc(stationName(L.name))}</b><span class="rv-n">${km < 10 ? km.toFixed(1).replace('.', ',') : Math.round(km)} km · ${f.esc(L.basin)}</span><span class="rv-pct" style="color:${fillColor(L.pct)}">${Math.round(L.pct)} %</span></div>
-        ${bar(L.pct)}
-        <div class="rv-sub"><span>${hm3(L.vol)} · ${f.esc(L.src)}, ${liveTime(L)}</span>${f.isNum(L.d24) ? `<span>24 h ${delta(L.d24)}</span>` : ''}</div></div>`).join('')}</div>
+      <div class="card rv-list rv-livelist">${sh.reservoirs.filter((L) => f.isNum(L.lat)).map((L) => [L, distKm(here.lat, here.lon, L.lat, L.lon)]).sort((a, b) => a[1] - b[1]).slice(0, 8).map(([L, km]) => `<div class="rv-lrow rv-row">
+        ${levelRow({
+          name: f.esc(stationName(L.name)), meta: [kmText(km), f.esc(L.basin), f.esc(L.src)],
+          pct: L.pct, vol: L.vol, cap: L.pct > 0 ? L.vol / (L.pct / 100) : null,
+          foot: [cell('24 h', delta(L.d24)), cell('Dato', liveTime(L))],
+        })}</div>`).join('')}</div>
       <p class="note rv-livenote">${sh.reservoirs.length} embalses con dato en tiempo real en toda España (redes SAIH, ACA e Hidrosur). Galicia Costa y las cuencas internas del País Vasco no publican el volumen en tiempo real: solo tienen el boletín semanal.</p>` : ''}
     <div class="section-title">Por cuencas</div>
     <div class="card rv-list">${d.basins.map((b, i) => {
       const bp = pc(b.cur, b.cap);
       const list = d.res.filter((r) => r[1] === i).sort((a, c) => c[2] - a[2]);
       return `<details class="rv-basin">
-        <summary>
-          <div class="rv-top"><b>${f.esc(b.name)}</b><span class="rv-n">${b.n} embalses</span><span class="rv-pct" style="color:${fillColor(bp)}">${Math.round(bp)} %</span></div>
-          ${bar(bp)}
-          <div class="rv-sub"><span>${hm3(b.cur)} de ${hm3(b.cap)} · hace un año ${Math.round(pc(b.year, b.cap))} %</span>${delta(b.cur - b.prev)}</div>
+        <summary class="rv-row">
+          ${levelRow({
+            name: f.esc(b.name), meta: [`${b.n} embalses`], pct: bp, vol: b.cur, cap: b.cap,
+            ref: f.isNum(b.avg10) ? pc(b.avg10, b.cap) : null,
+            foot: [
+              cell('Semana', delta(b.cur - b.prev)),
+              cell('Hace un año', `${Math.round(pc(b.year, b.cap))} %`),
+              f.isNum(b.avg10) && cell(AVG_LABEL, `${Math.round(pc(b.avg10, b.cap))} %`),
+            ],
+          })}
         </summary>
         <div class="rv-inner">${list.map((r) => resRow(r, b.name, undefined, live.get(d.res.indexOf(r)), d.res.indexOf(r))).join('')}</div>
       </details>`;

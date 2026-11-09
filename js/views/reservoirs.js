@@ -87,8 +87,11 @@ export const getAllGauges = async () => {
   for (const g of sh?.gauges || []) st.push([g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], 24, g[10], g[9]]);
   // Fuera las que llevan más de 2 h de retraso respecto al resto: sus «24 h» acaban horas antes y,
   // si ha llovido después, salen muy por debajo de las de al lado
-  const newest = Math.max(...st.map((r) => Date.parse(r[11]) || 0));
-  return { updated: a?.updated || sh?.updated, st: st.filter((r) => !(newest - Date.parse(r[11]) > 2 * 3600e3)), hasAemet: !!a };
+  // La referencia es la hora de la mayoría (percentil 80, nunca en el futuro), no la más reciente: basta una
+  // estación con la hora mal puesta para dejar atrasadas a todas las demás
+  const ts = st.map((r) => Date.parse(r[11])).filter((t) => t > 0).sort((x, y) => x - y);
+  const ref = Math.min(Date.now(), ts[Math.floor(ts.length * 0.8)] || Date.now());
+  return { updated: a?.updated || sh?.updated, st: st.filter((r) => !(ref - Date.parse(r[11]) > 2 * 3600e3)), hasAemet: !!a };
 };
 
 // Embalse del boletín semanal ↔ embalse con dato en tiempo real (mismo nombre y a menos de 25 km)

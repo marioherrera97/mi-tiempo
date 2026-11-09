@@ -81,10 +81,14 @@ async function ebroDirect(d) {
 export const getAllGauges = async () => {
   const [a, sh] = await Promise.all([getGauges().catch(() => null), getSaih().catch(() => null)]);
   if (!a && !sh) throw new Error('Todavía no hay datos de pluviómetros');
-  const st = (a?.st || []).map((r) => [...r, 'AEMET']);
+  // [.., fuente, hora del dato]: las de AEMET llegan todas con la del fichero
+  const st = (a?.st || []).map((r) => [...r, 'AEMET', a.updated]);
   // Las de las redes hidrológicas ya traen sus sumas de 1, 6, 12 y 24 h (con 24 en «horas con dato»)
-  for (const g of sh?.gauges || []) st.push([g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], 24, g[10]]);
-  return { updated: a?.updated || sh?.updated, st, hasAemet: !!a };
+  for (const g of sh?.gauges || []) st.push([g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], 24, g[10], g[9]]);
+  // Fuera las que llevan más de 2 h de retraso respecto al resto: sus «24 h» acaban horas antes y,
+  // si ha llovido después, salen muy por debajo de las de al lado
+  const newest = Math.max(...st.map((r) => Date.parse(r[11]) || 0));
+  return { updated: a?.updated || sh?.updated, st: st.filter((r) => !(newest - Date.parse(r[11]) > 2 * 3600e3)), hasAemet: !!a };
 };
 
 // Embalse del boletín semanal ↔ embalse con dato en tiempo real (mismo nombre y a menos de 25 km)

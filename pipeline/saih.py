@@ -3,8 +3,9 @@ volumen de los embalses y lluvia de sus pluviómetros, para completar el boletí
 pluviómetros de AEMET. Se ejecuta cada hora en GitHub Actions.
 
 Fuentes (todas públicas; datos provisionales sin validar):
-- SAIH Tajo: la ficha de cada estación trae las últimas 24 h hora a hora. Hay ~230 fichas, así que cada hora
-  se pide un tercio (cada estación se renueva cada 3 h y sigue teniendo sus 24 h completas).
+- SAIH Tajo: la ficha de cada estación trae las últimas 24 h hora a hora. Hay ~230 fichas: se piden las que
+  llevan más de 40 min sin renovar (todas, salvo que dos pasadas vayan muy seguidas). Antes se pedía un tercio
+  por pasada contando con una por hora, pero GitHub las retrasa a veces horas y se quedaban de hace medio día.
 - SIRA Guadiana: último dato de embalses y estaciones con la sesión pública que el portal da a cualquiera.
 - SAIH Ebro: tabla de pluviometría (última hora y 24 h) y volúmenes embalsados del día.
 - SAIH Duero: la página del mapa lleva dentro estaciones y embalses con su último dato.
@@ -215,13 +216,14 @@ def tajo_list(w):
 
 def fetch_tajo(state):
     st = state.setdefault('tajo', {'g': {}, 'r': {}})
+    seen = st.setdefault('at', {})  # cuándo se pidió por última vez cada ficha
     stations = {}
     for r in tajo_list('get-pluviometria')['pluviometria'] + tajo_list('get-embalses')['embalses']:
         e = r.get('estacion') or {}
         if e.get('url'):
             stations[e['codigo']] = e
-    turn = NOW.hour % 3
-    todo = [c for i, c in enumerate(sorted(stations)) if i % 3 == turn or c not in st['g'] and c not in st['r']]
+    fresh = (NOW - timedelta(minutes=40)).isoformat()
+    todo = sorted((c for c in stations if seen.get(c, '') < fresh), key=lambda c: seen.get(c, ''))
     for code in todo:
         e = stations[code]
         time.sleep(0.4)  # sin prisa: es un servidor público
@@ -230,6 +232,7 @@ def fetch_tajo(state):
         except Exception as ex:  # noqa: BLE001
             print(f'  Tajo {code}: {ex}')
             continue
+        seen[code] = NOW.isoformat()
         sig = {}
         for s in d.get('senalesportada', []) + d.get('senales', []):
             sig.setdefault(s['tiposenal'], s.get('valores') or [])

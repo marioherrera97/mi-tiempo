@@ -2,8 +2,8 @@
 # y la lluvia de los pluviómetros de AEMET.
 # Se ejecuta al subir cambios y tres veces por hora: los pluviómetros cambian cada hora y el ECMWF solo se
 # descarga cuando hay una pasada nueva (cada 6 horas; si no la hay, ese paso termina en segundos).
-# GitHub retrasa o se salta muchas ejecuciones programadas (con una por hora llegaron a pasar 7 h sin datos):
-# pedir tres, en minutos poco usados, hace que casi siempre haya alguna cada hora.
+# GitHub retrasa o se salta muchas ejecuciones programadas (aun pidiendo tres por hora hubo días con solo dos
+# pasadas): la publicación horaria la lanza reloj.yml y este cron queda como respaldo.
 # Los datos no se guardan en Git: viven en la caché de Actions y en la web publicada.
 name: Publicar web y datos ECMWF
 
@@ -85,3 +85,19 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      # GitHub ha llegado a dar el despliegue por bueno mientras la web seguía sirviendo los ficheros de horas antes:
+      # se comprueba que lo publicado es de este despliegue y, si no, el run falla para que se note
+      - name: Comprobar que la web está al día
+        run: |
+          inicio=$(date +%s)
+          url="${{ steps.deployment.outputs.page_url }}data/saih.json"
+          for intento in $(seq 1 20); do
+            lm=$(curl -sI "$url?v=$RANDOM$RANDOM" | grep -i '^last-modified:' | cut -d' ' -f2- | tr -d '')
+            if [ -n "$lm" ] && [ $(date -d "$lm" +%s) -ge $(( inicio - 900 )) ]; then
+              echo "Web al día: $lm"; exit 0
+            fi
+            echo "Intento $intento: la web sirve $lm"; sleep 30
+          done
+          echo "::error::La web sigue sirviendo datos antiguos ($lm) tras desplegar"
+          exit 1

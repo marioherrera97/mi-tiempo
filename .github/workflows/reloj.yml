@@ -1,0 +1,42 @@
+# Reloj de la publicación: lanza «Publicar web y datos ECMWF» cada hora.
+# El cron de GitHub no es fiable (en la práctica pasaba cada 4-8 horas y la lluvia en directo se quedaba atrás),
+# así que este flujo espera dentro de un trabajo y lanza la publicación al minuto 10 de cada hora.
+# Un trabajo no puede pasar de 6 horas: tras 5 vueltas se vuelve a lanzar a sí mismo y la cadena sigue.
+# El cron de abajo solo sirve para arrancar la cadena si alguna vez se corta; la concurrencia impide que haya dos.
+# Para pararlo: desactivar este flujo en la pestaña Actions.
+name: Reloj de publicación
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '25 */3 * * *'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: reloj
+  cancel-in-progress: false
+
+jobs:
+  reloj:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publicar cada hora
+        run: |
+          for vuelta in 1 2 3 4 5; do
+            gh workflow run pages.yml --ref main || echo "No se pudo lanzar la publicación (vuelta $vuelta)"
+            ahora=$(date +%s)
+            # Hasta el minuto 10 de la hora siguiente
+            espera=$(( 3600 - ahora % 3600 + 600 ))
+            echo "Vuelta $vuelta: próxima publicación en $(( espera / 60 )) min"
+            sleep $espera
+          done
+      - name: Seguir la cadena
+        if: ${{ !cancelled() }}
+        run: gh workflow run reloj.yml --ref main

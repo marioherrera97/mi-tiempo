@@ -809,3 +809,46 @@ a.rv-wrow { color: inherit; text-decoration: none; }
 .vf-table tr.vf-top td { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .vf-table .vf-use { padding: 3px 10px; font-size: 12px; min-height: 0; }
 .vf-y { margin: 12px 0 0; font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: 10px; background: var(--bg-2, rgba(127,127,127,.08)); }
+
+/* ===== Gráficas pequeñas de la ficha de un embalse (llenado y agua que entra) ===== */
+.ch { margin: 4px 0 12px; }
+.ch-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 14px; }
+.ch-title small { font-weight: 400; color: var(--text-3); }
+.ch-plot { position: relative; height: 96px; }
+.ch-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ch-plot svg * { vector-effect: non-scaling-stroke; }
+.ch-grid { stroke: var(--line); stroke-width: 1; }
+.ch-base { stroke: var(--text-3); opacity: .6; }
+.ch-area { fill: var(--accent); fill-opacity: .14; }
+.ch-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.ch-dash { stroke-dasharray: 4 3; }
+.ch-obs { stroke: var(--text-2); }
+.ch-band { fill: var(--accent); fill-opacity: .25; }
+.ch-fut { fill: var(--accent); fill-opacity: .05; }
+.ch-now { stroke: var(--text-2); stroke-width: 1; opacity: .7; }
+.ch-yl { position: absolute; right: 0; transform: translateY(-100%); font-size: 10px; line-height: 1; padding-bottom: 2px; color: var(--text-3); pointer-events: none; }
+.ch-tag { position: absolute; top: 0; font-size: 10px; line-height: 1; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; transform: translateY(-130%); white-space: nowrap; }
+.ch-val { position: absolute; transform: translate(-50%, -135%); font-size: 11px; font-weight: 650; color: var(--text); white-space: nowrap; pointer-events: none; }
+.ch-dot, .ch-ring { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%, -50%); }
+.ch-dot { background: var(--accent); box-shadow: 0 0 0 2px var(--card); }
+.ch-ring { border: 2px solid var(--text-2); background: var(--card); }
+.ch-ref { position: absolute; width: 16px; height: 3px; border-radius: 2px; background: var(--text); opacity: .75; transform: translate(-100%, -50%); }
+.ch-x { position: relative; height: 18px; font-size: 10.5px; color: var(--text-3); }
+.ch-x span { position: absolute; top: 4px; transform: translateX(-50%); white-space: nowrap; }
+.ch-x span::before { content: ''; position: absolute; left: 50%; top: -4px; width: 1px; height: 3px; background: var(--text-3); }
+.ch-x span.l { transform: none; }
+.ch-x span.l::before { left: 0; }
+.ch-x span.r { transform: translateX(-100%); }
+.ch-x span.r::before { left: auto; right: 0; }
+.ch-x span.now { color: var(--text); font-weight: 650; }
+.ch-x span.t { width: 1px; height: 0; }
+.ch-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+.ch-key span { display: inline-flex; align-items: center; gap: 6px; }
+.ch-key b { font-weight: 650; color: var(--text); }
+.ch-k { flex: none; display: inline-block; }
+.ch-k.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.ch-k.ring { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-2); box-sizing: border-box; }
+.ch-k.ref { width: 14px; height: 3px; border-radius: 2px; background: var(--text); opacity: .75; }
+.ch-k.dash { width: 16px; height: 0; border-top: 2px dashed var(--accent); }
+.ch-k.obs { width: 16px; height: 0; border-top: 2px solid var(--text-2); }
+.ch-k.band { width: 14px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 30%, transparent); }

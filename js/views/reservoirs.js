@@ -200,18 +200,79 @@ const distKm = (a, b, c, d) => {
   return 2 * R * Math.asin(Math.sqrt(x));
 };
 
-// Mini gráfico de la última año de un embalse (SVG, sin Chart.js: hay cientos)
-function spark(series, cap) {
-  const pts = series.map((v, i) => [i, v]).filter(([, v]) => f.isNum(v));
-  if (pts.length < 2) return '';
-  const W = 300, H = 56, n = series.length - 1;
-  const xy = pts.map(([i, v]) => `${((i / n) * W).toFixed(1)},${(H - 2 - (v / cap) * (H - 4)).toFixed(1)}`);
-  const last = pts[pts.length - 1][1];
-  const col = fillColor(pc(last, cap));
-  return `<svg class="rv-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <polygon points="0,${H} ${xy.join(' ')} ${W},${H}" fill="${alpha(col, 0.18)}"/>
-    <polyline points="${xy.join(' ')}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+// ---------- Gráficas pequeñas de la ficha (SVG, sin Chart.js: hay cientos) ----------
+// Líneas y áreas en un SVG estirado de 100×100 (las coordenadas son ya % del ancho y del alto); textos, puntos
+// y marcas van en HTML encima, en %, para que no se deformen al estirar
+const P = (v) => `${v.toFixed(2)}%`;
+const at = (x, y) => `left:${P(x)};top:${P(y)}`;
+function miniChart({ title, unit, svg, yTicks = [], xTicks = [], marks = '', key = [] }) {
+  return `<div class="ch">
+    <div class="ch-title">${title}${unit ? ` <small>${unit}</small>` : ''}</div>
+    <div class="ch-plot">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        ${yTicks.map((t) => `<line x1="0" x2="100" y1="${t.y.toFixed(2)}" y2="${t.y.toFixed(2)}" class="ch-grid${t.base ? ' ch-base' : ''}"/>`).join('')}
+        ${svg}
+      </svg>
+      ${yTicks.map((t) => `<span class="ch-yl" style="top:${P(t.y)}">${t.label}</span>`).join('')}
+      ${marks}
+    </div>
+    <div class="ch-x">${xTicks.map((t) => `<span class="${t.cls || ''}" style="left:${P(t.x)}">${t.label}</span>`).join('')}</div>
+    ${key.length ? `<div class="ch-key">${key.filter(Boolean).map(([sym, text]) => `<span><i class="ch-k ${sym}"></i>${text}</span>`).join('')}</div>` : ''}
+  </div>`;
 }
+const isoDay = (t) => new Date(t).toLocaleDateString('sv-SE');  // AAAA-MM-DD en hora local
+const MONTH = (iso) => f.monthName(iso, true);
+
+// Llenado del último año (boletín semanal) y, si es más reciente, el dato en tiempo real. Escala fija de 0 a 100 %
+// de la capacidad; se marcan hace un año (donde empieza la línea) y la media de 10 años para esta semana
+function levelChart(series, cap, L, year, avg10) {
+  const wk = bulletinWeeks.slice(-series.length);
+  const pts = series.map((v, i) => (f.isNum(v) && wk[i] ? [Date.parse(wk[i]), pc(v, cap), wk[i]] : null)).filter(Boolean);
+  if (pts.length < 2 || !cap) return '';
+  const lastWk = pts[pts.length - 1];
+  const liveDay = L && f.isNum(L.pct) && L.t ? isoDay(L.t) : null;
+  const live = liveDay && liveDay > lastWk[2] ? [Date.parse(liveDay), L.pct, liveDay] : null;
+  const end = live || lastWk;
+  const t0 = Date.parse(f.addDays(lastWk[2], -364)), t1 = end[0];
+  const top = Math.max(100, ...pts.map((p) => p[1]), live ? live[1] : 0);
+  const X = (t) => (100 * (t - t0)) / (t1 - t0), Y = (p) => 100 * (1 - p / top);
+  const xy = pts.map(([t, p]) => `${X(t).toFixed(2)},${Y(p).toFixed(2)}`).join(' ');
+  const svg = `<polygon points="${X(pts[0][0]).toFixed(2)},100 ${xy} ${X(lastWk[0]).toFixed(2)},100" class="ch-area"/>
+    <polyline points="${xy}" class="ch-line"/>
+    ${live ? `<polyline points="${X(lastWk[0]).toFixed(2)},${Y(lastWk[1]).toFixed(2)} ${X(live[0]).toFixed(2)},${Y(live[1]).toFixed(2)}" class="ch-line ch-dash"/>` : ''}`;
+  // Meses: marca en el día 1 de cada uno y nombre cada tres (en enero, el año)
+  const xTicks = [{ x: 0, label: `${MONTH(f.addDays(lastWk[2], -364))} ${f.addDays(lastWk[2], -364).slice(0, 4)}`, cls: 'l' }];
+  for (let d = `${f.addDays(lastWk[2], -364).slice(0, 7)}-01`; ; ) {
+    d = f.addDays(d, 32).slice(0, 7) + '-01';
+    const x = X(Date.parse(d));
+    if (x >= 100) break;
+    const m = +d.slice(5, 7);
+    if (m % 3 === 1 && x > 20 && x < 85) xTicks.push({ x, label: m === 1 ? d.slice(0, 4) : MONTH(d) });
+    else xTicks.push({ x, label: '', cls: 't' });
+  }
+  const today = f.todayISO();
+  xTicks.push({ x: 100, label: end[2] === today ? 'hoy' : f.dateShort(end[2]), cls: 'r' });
+  const yearX = X(Date.parse(f.addDays(lastWk[2], -364)));
+  const marks = `${f.isNum(year) ? `<i class="ch-ring" style="${at(yearX, Y(pc(year, cap)))}"></i>` : ''}
+    ${f.isNum(avg10) ? `<i class="ch-ref" style="${at(X(lastWk[0]), Y(pc(avg10, cap)))}"></i>` : ''}
+    <i class="ch-dot" style="${at(100, Y(end[1]))}"></i>`;
+  return miniChart({
+    title: 'Llenado en el último año', unit: '% de la capacidad', svg, marks, xTicks,
+    yTicks: [0, 50, 100].map((v) => ({ y: Y(v), label: v ? `${v} %` : '', base: !v })),
+    key: [
+      ['dot', `${end[2] === today ? 'hoy' : f.dateShort(end[2])} <b>${Math.round(end[1])} %</b>`],
+      f.isNum(year) && ['ring', `hace un año <b>${Math.round(pc(year, cap))} %</b>`],
+      f.isNum(avg10) && ['ref', `media 10 años <b>${Math.round(pc(avg10, cap))} %</b>`],
+      live && ['dash', `del boletín (${f.dateShort(lastWk[2])}) al dato de ${f.esc(L.src)}`],
+    ],
+  });
+}
+
+// Escala «redonda» para el eje Y: 0, paso, 2·paso… hasta cubrir `max`
+const niceStep = (v) => {
+  const e = 10 ** Math.floor(Math.log10(v));
+  return [1, 2, 2.5, 5, 10].map((k) => k * e).find((s) => s >= v);
+};
 
 // Fila de nivel con porcentaje: volumen debajo y raya en la media de 10 años
 const AVG_LABEL = '<i class="rv-tick"></i>Media 10 años';
@@ -221,6 +282,7 @@ const pctRow = ({ pct, vol, cap, ref, ...o }) => levelRow({
 });
 const dayShort = (iso) => f.dateShort(iso);
 let bulletin = '';  // fecha del boletín semanal que se está viendo
+let bulletinWeeks = [];  // y las fechas de sus semanas (para el eje de la gráfica de llenado)
 
 // Cabecera de un embalse (lista y ficha del mapa). Con dato en tiempo real se muestra ese, que es el más
 // reciente, y el del boletín queda en el detalle. `compact`: sin la columna de la hora (va en los datos de arriba)
@@ -248,7 +310,7 @@ function resRow(r, basinName, dist, live, idx) {
   return `<details class="rv-res"${f.isNum(lat) ? ` data-i="${idx}"` : ''}>
     <summary class="rv-row">${reservoirHead(r, { basinName: dist !== undefined ? basinName : null, dist, live })}</summary>
     <div class="rv-more">
-      ${spark(series, cap)}
+      ${levelChart(series, cap, L, year, avg10)}
       <div class="rv-cmp">
         <span>Cuenca</span><b>${f.esc(basinName)}</b>
         ${L ? `<span>Tiempo real (${f.esc(L.src)}, ${liveTime(L)})</span><b>${p1(L.pct)} · ${hm3(L.vol)}</b>` : ''}
@@ -268,6 +330,7 @@ function renderReservoirs(box, d, sh) {
   const p = pc(t.cur, t.cap);
   const upd = f.dateShort(d.updated) + ' ' + d.updated.slice(0, 4);
   bulletin = d.updated;
+  bulletinWeeks = d.weeks;
   const here = state.place;
   const near = d.res.filter((r) => f.isNum(r[8]))
     .map((r) => [r, distKm(here.lat, here.lon, r[8], r[9])])
@@ -360,23 +423,43 @@ const pts1 = (v) => (Math.abs(v) < 0.05 ? 'sin cambio' : `${v > 0 ? '+' : ''}${v
 const CONF = { alta: 'var(--ok)', media: 'var(--warm)', baja: 'var(--danger)' };
 const confHead = (c) => `<div class="rv-fc-head">Previsión 7 días <span class="rv-conf" style="color:${CONF[c]}">fiabilidad ${c}</span></div>`;
 
-// Caudal que entra: últimas 8 semanas y los próximos 15 días con la banda de los escenarios (25–75 %)
+// Caudal que entra: los 7 días pasados y los 7 previstos (los mismos que «Entró» y «Entrará» de debajo), con la
+// banda en la que caen la mitad de los escenarios de GloFAS (del 25 al 75 %). Eje Y desde 0
 function inflowChart(m) {
-  const pts = m.chart.filter((p) => f.isNum(p.q));
-  if (pts.length < 10) return '';
-  const W = 300, H = 64, n = pts.length - 1;
-  const top = Math.max(1, ...pts.map((p) => Math.max(p.q, p.d > m.today && f.isNum(p.hi) ? p.hi : 0))) * 1.08;
-  const X = (i) => ((i / n) * W).toFixed(1), Y = (v) => (H - 2 - (v / top) * (H - 6)).toFixed(1);
-  const ti = pts.findIndex((p) => p.d >= m.today);
-  const fut = pts.map((p, i) => [p, i]).filter(([p]) => p.d >= m.today && f.isNum(p.lo) && f.isNum(p.hi));
-  const band = fut.length > 1 ? `<polygon points="${fut.map(([p, i]) => `${X(i)},${Y(p.hi)}`).join(' ')} ${fut.reverse().map(([p, i]) => `${X(i)},${Y(p.lo)}`).join(' ')}" fill="var(--rain)" opacity=".22"/>` : '';
-  const line = (a, b) => pts.slice(a, b).map((p, i) => `${X(i + a)},${Y(p.q)}`).join(' ');
-  return `<div class="rv-fc-chart"><svg class="rv-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${band}
-      <polyline points="${line(0, ti + 1)}" fill="none" stroke="var(--rain)" stroke-width="2" vector-effect="non-scaling-stroke"/>
-      <polyline points="${line(ti, pts.length)}" fill="none" stroke="var(--rain)" stroke-width="2" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>
-      ${ti > 0 ? `<line x1="${X(ti)}" x2="${X(ti)}" y1="0" y2="${H}" stroke="var(--text-3)" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".6"/>` : ''}</svg>
-    <div class="rv-fc-axis"><span>hace 8 semanas</span>${ti > 0 ? `<span class="rv-fc-today" style="left:${((ti / n) * 100).toFixed(1)}%">hoy</span>` : ''}<span>+15 días</span></div>
-    <div class="rv-fc-cap">Agua que traen los ríos (m³/s) · máx. ${num(top / 1.08)}</div></div>`;
+  const from = f.addDays(m.today, -7), to = f.addDays(m.today, 7);
+  const pts = m.chart.filter((p) => p.d >= from && p.d <= to && f.isNum(p.q));
+  if (pts.length < 8) return '';
+  const t0 = Date.parse(from), span = Date.parse(to) - t0;
+  const X = (d) => (100 * (Date.parse(d) - t0)) / span;
+  const past = pts.filter((p) => p.d <= m.today), fut = pts.filter((p) => p.d >= m.today);
+  const band = fut.filter((p) => f.isNum(p.lo) && f.isNum(p.hi));
+  const max = Math.max(0.1, ...pts.map((p) => p.q), ...band.map((p) => p.hi));
+  const step = niceStep(max / 2), top = Math.ceil(max / step) * step;
+  const Y = (v) => 100 * (1 - v / top);
+  const line = (arr) => arr.map((p) => `${X(p.d).toFixed(2)},${Y(p.q).toFixed(2)}`).join(' ');
+  const xh = X(m.today);
+  const svg = `<rect x="${xh.toFixed(2)}" y="0" width="${(100 - xh).toFixed(2)}" height="100" class="ch-fut"/>
+    ${band.length > 1 ? `<polygon points="${band.map((p) => `${X(p.d).toFixed(2)},${Y(p.hi).toFixed(2)}`).join(' ')} ${[...band].reverse().map((p) => `${X(p.d).toFixed(2)},${Y(p.lo).toFixed(2)}`).join(' ')}" class="ch-band"/>` : ''}
+    <line x1="${xh.toFixed(2)}" x2="${xh.toFixed(2)}" y1="0" y2="100" class="ch-now"/>
+    ${past.length > 1 ? `<polyline points="${line(past)}" class="ch-line ch-obs"/>` : ''}
+    ${fut.length > 1 ? `<polyline points="${line(fut)}" class="ch-line ch-dash"/>` : ''}`;
+  // Valor más alto de la ventana, escrito sobre su punto
+  const pk = pts.reduce((a, p) => (p.q > a.q ? p : a));
+  const yTicks = [];
+  for (let v = 0; v <= top + 1e-9; v += step) yTicks.push({ y: Y(v), label: v ? num(v) : '', base: !v });
+  const day = (d) => f.dateShort(d);
+  return miniChart({
+    title: 'Agua que entra por los ríos', unit: 'm³/s', svg, yTicks,
+    marks: `<span class="ch-tag l" style="left:1%">últimos 7 días</span><span class="ch-tag" style="left:${P(xh + 1)}">próximos 7 días</span>
+      <span class="ch-val" style="${at(X(pk.d), Y(pk.q))}">${num(pk.q)}</span>`,
+    xTicks: [
+      { x: 0, label: day(from), cls: 'l' },
+      ...[...Array(13)].map((_, i) => i + 1).filter((i) => i !== 7).map((i) => ({ x: (100 * i) / 14, label: '', cls: 't' })),
+      { x: xh, label: 'hoy', cls: 'now' },
+      { x: 100, label: day(to), cls: 'r' },
+    ],
+    key: [['obs', 'simulado con la lluvia ya caída'], ['dash', 'previsto (mediana)'], band.length > 1 && ['band', 'rango probable: la mitad de los escenarios']],
+  });
 }
 
 async function renderForecast(box, r, weeks, live) {
